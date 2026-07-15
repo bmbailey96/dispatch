@@ -205,6 +205,74 @@
     color: var(--ink-dim);
     margin-bottom: 20px;
   }
+  .duration-line {
+    font-size: 11px;
+    color: var(--ink-dim);
+    margin: 2px 0 12px;
+    line-height: 1.6;
+  }
+  .est-tag {
+    border: 1px solid var(--rule);
+    padding: 1px 5px;
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    color: var(--ink-dim);
+  }
+  .queue {
+    border-top: 1px solid var(--rule);
+    padding-top: 12px;
+    margin-top: 4px;
+    margin-bottom: 12px;
+  }
+  .queue-row {
+    display: flex;
+    gap: 10px;
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--ink-dim);
+  }
+  .queue-row.first .what { color: var(--ink); }
+  .q-when {
+    flex-shrink: 0;
+    width: 52px;
+    color: var(--signal-dim);
+  }
+  .queue-row .what, .item-row .what {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ink-dim);
+  }
+  .full-list-toggle { margin-top: 12px; }
+  .full-list {
+    margin-top: 10px;
+    max-height: 340px;
+    overflow-y: auto;
+    border: 1px solid var(--rule);
+    padding: 10px 12px;
+  }
+  .item-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    font-size: 12px;
+    line-height: 1.9;
+  }
+  .item-row.is-sent { opacity: 0.4; }
+  .item-row.is-sent .q-when { color: var(--ink-dim); }
+  .item-row .what { flex: 1; }
+  .mini-btn {
+    background: none;
+    border: 1px solid var(--rule);
+    color: var(--ink-dim);
+    font-family: inherit;
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    padding: 2px 7px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .mini-btn:hover { border-color: var(--signal); color: var(--ink); }
 </style>
 </head>
 <body>
@@ -244,20 +312,14 @@ function fmtHistoryWhen(iso) {
   return d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' });
 }
 
+let DRIPS = []; // last loaded status payload, so expand/collapse can re-render without refetching
+
 function renderCard(drip) {
   const pct = drip.total > 0 ? Math.round((drip.sent / drip.total) * 100) : 0;
   const nextHtml = drip.next
-    ? `<div class="next"><span class="label">next: </span>${fmtWhen(drip.next.at)}</div>
+    ? `<div class="next"><span class="label">next: </span>${drip.next.at ? fmtWhen(drip.next.at) : '(date unknown until started)'}</div>
        <div class="next-detail">${escapeHtml(drip.next.label || '')}</div>`
-    : `<div class="next-detail" style="margin-bottom:14px;">${drip.started ? 'not currently scheduled' : 'not started yet'}</div>`;
-
-  const historyHtml = drip.history && drip.history.length
-    ? drip.history.map(h => `
-        <div class="history-row">
-          <span class="when">${fmtHistoryWhen(h.at)}</span>
-          <span class="what">${escapeHtml(h.label || '')}</span>
-        </div>`).join('')
-    : `<div class="empty-note">nothing sent yet</div>`;
+    : `<div class="next-detail" style="margin-bottom:14px;">${drip.started ? 'nothing left to send' : 'not started yet'}</div>`;
 
   const statusHtml = drip.started
     ? `<span class="live-tag"><span class="dot" aria-hidden="true"></span>live</span>`
@@ -266,6 +328,54 @@ function renderCard(drip) {
   const startBtnHtml = drip.started
     ? ''
     : `<button class="action-btn start-btn" data-endpoint="${drip.endpoint}" onclick="startDrip(this)">start chain</button>`;
+
+  // ---- duration line ----
+  let durationHtml = '';
+  if (drip.duration) {
+    const d = drip.duration;
+    const bits = [];
+    if (d.totalDays != null) {
+      const months = d.totalDays / 30.4;
+      bits.push(`whole chain: ~${Math.round(d.totalDays)} days${months >= 1.5 ? ` (~${months.toFixed(1)} months)` : ''}`);
+    }
+    if (d.remainingDays != null) bits.push(`~${Math.round(d.remainingDays)} days left`);
+    if (d.finishAt) bits.push(`finishes around ${new Date(d.finishAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`);
+    if (d.note && !d.finishAt) bits.push(d.note);
+    if (bits.length) {
+      durationHtml = `<div class="duration-line">${escapeHtml(bits.join(' \u00b7 '))}${d.mode === 'estimate' ? ' <span class="est-tag">est.</span>' : ''}</div>`;
+    }
+  }
+
+  // ---- upcoming queue: next 5 unsent ----
+  const upcoming = (drip.items || []).filter((i) => !i.sent).slice(0, 5);
+  const upcomingHtml = upcoming.length
+    ? `<div class="queue">
+        <div class="history-title">UP NEXT</div>
+        ${upcoming.map((i, idx) => `
+          <div class="queue-row${idx === 0 ? ' first' : ''}">
+            <span class="q-when">${i.at ? fmtQueueWhen(i.at) : '--'}</span>
+            <span class="what">${escapeHtml(i.label || '')}</span>
+          </div>`).join('')}
+       </div>`
+    : '';
+
+  // ---- sent history (real send log) ----
+  const historyHtml = drip.history && drip.history.length
+    ? drip.history.map(h => `
+        <div class="history-row">
+          <span class="when">${fmtHistoryWhen(h.at)}</span>
+          <span class="what">${escapeHtml(h.label || '')}</span>
+        </div>`).join('')
+    : `<div class="empty-note">nothing sent yet</div>`;
+
+  // ---- full item list (collapsed by default) ----
+  const fullListHtml = `
+    <div class="full-list-toggle">
+      <button class="action-btn" onclick="toggleFullList('${drip.endpoint}')">
+        <span id="toggle-label-${drip.endpoint}">show all ${drip.total} items</span>
+      </button>
+    </div>
+    <div class="full-list" id="full-list-${drip.endpoint}" style="display:none;"></div>`;
 
   return `
     <div class="card">
@@ -276,16 +386,69 @@ function renderCard(drip) {
       <div class="meter"><div class="meter-fill" style="width:${pct}%"></div></div>
       ${statusHtml}
       ${nextHtml}
+      ${durationHtml}
       <div class="actions">
         <button class="action-btn" data-endpoint="${drip.endpoint}" onclick="testDrip(this)">test next</button>
         ${startBtnHtml}
       </div>
       <div class="action-result" id="result-${drip.endpoint}"></div>
+      ${upcomingHtml}
       <div class="history">
-        <div class="history-title">RECENT</div>
+        <div class="history-title">SENT</div>
         ${historyHtml}
       </div>
+      ${fullListHtml}
     </div>`;
+}
+
+// Queue rows show date-only (estimates aren't precise to the hour anyway)
+function fmtQueueWhen(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function toggleFullList(endpoint) {
+  const listEl = document.getElementById('full-list-' + endpoint);
+  const labelEl = document.getElementById('toggle-label-' + endpoint);
+  const drip = DRIPS.find((d) => d.endpoint === endpoint);
+  if (!drip) return;
+
+  if (listEl.style.display === 'none') {
+    // Render on first open (203 rows for Ong's Hat -- don't build until asked)
+    if (!listEl.dataset.rendered) {
+      listEl.innerHTML = (drip.items || []).map((i) => `
+        <div class="item-row ${i.sent ? 'is-sent' : ''}">
+          <span class="q-when">${i.sent ? 'sent' : (i.at ? fmtQueueWhen(i.at) : '--')}</span>
+          <span class="what">${escapeHtml(i.label || '')}</span>
+          ${!i.sent && !drip.started ? `<button class="mini-btn" onclick="jumpTo('${endpoint}', '${String(i.key).replace(/'/g, "\\'")}', this)">start here</button>` : ''}
+        </div>`).join('');
+      listEl.dataset.rendered = '1';
+    }
+    listEl.style.display = 'block';
+    labelEl.textContent = 'hide list';
+  } else {
+    listEl.style.display = 'none';
+    labelEl.textContent = `show all ${drip.total} items`;
+  }
+}
+
+async function jumpTo(endpoint, key, btn) {
+  if (!confirm('Start from this item? Everything before it will be marked as already sent and will never arrive.')) return;
+  btn.disabled = true;
+  btn.textContent = '\u2026';
+  const resultEl = document.getElementById('result-' + endpoint);
+  try {
+    const res = await fetch(`/.netlify/functions/${endpoint}?jump_to=${encodeURIComponent(key)}`);
+    const text = await res.text();
+    resultEl.textContent = text;
+    resultEl.className = 'action-result ok';
+    setTimeout(load, 1200);
+  } catch (err) {
+    resultEl.textContent = 'Failed: ' + err.message;
+    resultEl.className = 'action-result err';
+    btn.disabled = false;
+    btn.textContent = 'start here';
+  }
 }
 
 async function testDrip(btn) {
@@ -340,6 +503,7 @@ async function load() {
     if (!res.ok) throw new Error(`status ${res.status}`);
     const data = await res.json();
     main.innerHTML = data.drips.map(renderCard).join('');
+    DRIPS = data.drips;
     asOf.textContent = 'as of ' + new Date(data.generatedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   } catch (err) {
     main.innerHTML = `<div class="error-banner">Couldn't read status: ${escapeHtml(err.message)}</div>`;
