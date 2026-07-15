@@ -4,6 +4,7 @@ const { sendEmail } = require('../../lib/sendEmail');
 const { buildOngshatEmailHtml, buildSubject } = require('../../lib/buildOngshatEmailHtml');
 const { denverWallTimeToUTC } = require('../../lib/denverTime');
 const { appendHistory } = require('../../lib/historyLog');
+const { ongshat: PACING } = require('../../lib/pacing');
 
 // Recomputed from the actual sequence rather than hardcoded, since this
 // number has already grown once and may grow again -- it's all one
@@ -17,10 +18,11 @@ const STARTED_KEY = 'started';
 // Originally tuned so 122 items averaged out to about six months end to
 // end. The sequence has since grown (bridge material, Book Two, coda all
 // spliced into one continuous run), so at this same gap the full run is
-// longer than six months now -- tighten these two numbers if a shorter
-// total runtime matters more than the pacing feel.
-const MIN_GAP_DAYS = 0.75;
-const MAX_GAP_DAYS = 2.25;
+// longer than six months now -- tighten these two numbers (in
+// lib/pacing.js, not here) if a shorter total runtime matters more than
+// the pacing feel. status.js's duration estimate reads the same values.
+const MIN_GAP_DAYS = PACING.minGapDays;
+const MAX_GAP_DAYS = PACING.maxGapDays;
 
 /**
  * Picks a random Montana-local send time, weighted toward evening,
@@ -96,6 +98,24 @@ exports.handler = async function (event) {
       html,
     });
     return { statusCode: 200, body: `SENT [TEST]: index ${cursor} (next up), type ${item.type}` };
+  }
+
+  // ?jump_to=N sets the cursor directly to index N -- lets you start (or
+  // restart) the chain from any point instead of always item 0. Doesn't
+  // send anything itself and doesn't touch next-send-at, so the normal
+  // pacing picks up from wherever this lands. Safe to call whether or
+  // not the chain has started yet.
+  if (params.jump_to !== undefined) {
+    const idx = parseInt(params.jump_to, 10);
+    if (isNaN(idx) || idx < 0 || idx > sequence.length) {
+      return { statusCode: 400, body: `Invalid index. Must be 0-${sequence.length}.` };
+    }
+    await store.set(CURSOR_KEY, String(idx));
+    const upcoming = sequence[idx];
+    return {
+      statusCode: 200,
+      body: `Cursor set to ${idx}. Next up: ${upcoming ? `${upcoming.type}${upcoming.type === 'source' ? ' ' + buildSubject(upcoming, TOTAL_TEXT_ITEMS) : ''}` : '(end of sequence)'}`,
+    };
   }
 
   // ?start=1 arms the chain -- until this has been called once, the

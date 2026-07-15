@@ -1,6 +1,7 @@
 const { getStore, connectLambda } = require('@netlify/blobs');
 const { readHistory } = require('../../lib/historyLog');
 const { denverWallTimeToUTC } = require('../../lib/denverTime');
+const { ongshat: ONGSHAT_PACING, scp: SCP_PACING } = require('../../lib/pacing');
 
 const schedule = require('../../data/schedule.json');
 const scpSendOrder = require('../../data/scp-send-order.json');
@@ -10,6 +11,7 @@ const ongshatSequence = require('../../data/ongshat-sequence.json');
 const scpByUrl = Object.fromEntries(scpMasterList.map((e) => [e.url, e]));
 
 const STARTED_KEY = 'started';
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function targetInstantFor(item, activationParts) {
   const base = new Date(Date.UTC(activationParts.year, activationParts.month - 1, activationParts.day));
@@ -26,6 +28,10 @@ async function getStarted(store) {
   }
 }
 
+function daysBetween(a, b) {
+  return Math.round(((b - a) / DAY_MS) * 10) / 10;
+}
+
 async function dionaeaStatus() {
   const store = getStore('dionaea-house-history');
   const started = await getStarted(store);
@@ -40,8 +46,6 @@ async function dionaeaStatus() {
   const sentSet = new Set(sentIds);
   const history = await readHistory(store);
 
-  // Activation date: Blobs (set by "start") first, env var override second --
-  // matches the resolution order in dionaea-daily-check.js itself.
   let activationRaw = null;
   try {
     activationRaw = await store.get('activation-date', { type: 'text' });
@@ -50,17 +54,32 @@ async function dionaeaStatus() {
   }
   if (!activationRaw) activationRaw = process.env.DIONAEA_ACTIVATION_DATE || null;
 
-  let nextItem = null;
+  const sortedSchedule = [...schedule].sort((a, b) => a.dayIndex - b.dayIndex || a.hour - b.hour || a.minute - b.minute);
+
+  let activationParts = null;
   if (activationRaw) {
     const [year, month, day] = activationRaw.split('-').map((n) => parseInt(n, 10));
-    const activationParts = { year, month, day };
-    const upcoming = schedule
-      .filter((item) => !sentSet.has(item.id))
-      .map((item) => ({ item, at: targetInstantFor(item, activationParts) }))
-      .sort((a, b) => a.at - b.at);
-    if (upcoming.length > 0) {
-      nextItem = { label: upcoming[0].item.subject, at: upcoming[0].at.toISOString() };
-    }
+    activationParts = { year, month, day };
+  }
+
+  const now = new Date();
+  const items = sortedSchedule.map((item) => ({
+    key: item.id,
+    label: item.subject,
+    type: item.type,
+    sent: sentSet.has(item.id),
+    at: activationParts ? targetInstantFor(item, activationParts).toISOString() : null,
+  }));
+
+  const nextItem = items.find((i) => !i.sent) || null;
+
+  let duration = { mode: 'exact', note: activationParts ? null : 'no activation date set yet -- dates unknown until started' };
+  if (activationParts) {
+    const activationDate = new Date(Date.UTC(activationParts.year, activationParts.month - 1, activationParts.day));
+    const finishAt = targetInstantFor(sortedSchedule[sortedSchedule.length - 1], activationParts);
+    duration.finishAt = finishAt.toISOString();
+    duration.totalDays = daysBetween(activationDate, finishAt);
+    duration.remainingDays = Math.max(daysBetween(now, finishAt), 0);
   }
 
   return {
@@ -70,8 +89,10 @@ async function dionaeaStatus() {
     total: schedule.length,
     sent: sentIds.length,
     remaining: schedule.length - sentIds.length,
-    next: nextItem,
-    history: history.slice(-10).reverse(),
+    next: nextItem ? { label: nextItem.label, at: nextItem.at } : null,
+    duration,
+    items,
+    history: history.slice().reverse(),
   };
 }
 
@@ -95,7 +116,22 @@ async function scpStatus() {
   }
   const history = await readHistory(store);
   const sentSet = new Set(sentUrls);
-  const nextUrl = scpSendOrder.find((url) => !sentSet.has(url));
+  const avgGap = (SCP_PACING.minGapDays + SCP_PACING.maxGapDays) / 2;
+
+  const now = new Date();
+  let cursorDate = nextSendAt ? new Date(nextSendAt) : now;
+  const items = sendOrderWithEstimates(scpSendOrder, sentSet, scpByUrl, cursorDate, avgGap, (url) => scpByUrl[url].title);
+
+  const nextItem = items.find((i) => !i.sent) || null;
+  const remainingCount = Math.max(scpSendOrder.length - sentUrls.length, 0);
+
+  const duration = {
+    mode: 'estimate',
+    note: `average pacing (${SCP_PACING.minGapDays}-${SCP_PACING.maxGapDays} day gaps, ~${avgGap} avg) -- not exact`,
+    totalDays: Math.round(scpSendOrder.length * avgGap),
+    remainingDays: Math.round(remainingCount * avgGap),
+    finishAt: remainingCount > 0 ? new Date(now.getTime() + remainingCount * avgGap * DAY_MS).toISOString() : null,
+  };
 
   return {
     name: 'SCP Weekly',
@@ -103,12 +139,25 @@ async function scpStatus() {
     started,
     total: scpSendOrder.length,
     sent: sentUrls.length,
-    remaining: Math.max(scpSendOrder.length - sentUrls.length, 0),
-    next: nextSendAt
-      ? { label: nextUrl && scpByUrl[nextUrl] ? scpByUrl[nextUrl].title : '(cycle restarting)', at: nextSendAt }
-      : null,
-    history: history.slice(-10).reverse(),
+    remaining: remainingCount,
+    next: nextItem ? { label: nextItem.label, at: nextItem.at } : null,
+    duration,
+    items,
+    history: history.slice().reverse(),
   };
+}
+
+function sendOrderWithEstimates(order, sentSet, byKey, startDate, avgGap, labelFn) {
+  let runningDate = new Date(startDate);
+  return order.map((key) => {
+    const sent = sentSet.has(key);
+    let at = null;
+    if (!sent) {
+      at = runningDate.toISOString();
+      runningDate = new Date(runningDate.getTime() + avgGap * DAY_MS);
+    }
+    return { key, label: labelFn(key), type: undefined, sent, at };
+  });
 }
 
 async function ongshatStatus() {
@@ -130,7 +179,31 @@ async function ongshatStatus() {
     // not scheduled yet
   }
   const history = await readHistory(store);
-  const nextItem = ongshatSequence[cursor];
+  const avgGap = (ONGSHAT_PACING.minGapDays + ONGSHAT_PACING.maxGapDays) / 2;
+  const now = new Date();
+
+  let runningDate = nextSendAt ? new Date(nextSendAt) : now;
+  const items = ongshatSequence.map((item, idx) => {
+    const sent = idx < cursor;
+    let at = null;
+    if (!sent) {
+      at = runningDate.toISOString();
+      runningDate = new Date(runningDate.getTime() + avgGap * DAY_MS);
+    }
+    const label = item.type === 'image' ? `image: ${item.file}` : item.type === 'source' ? `source #${item.id + 1}` : item.type;
+    return { key: idx, label, type: item.type, sent, at };
+  });
+
+  const nextItem = items.find((i) => !i.sent) || null;
+  const remainingCount = Math.max(ongshatSequence.length - cursor, 0);
+
+  const duration = {
+    mode: 'estimate',
+    note: `average pacing (${ONGSHAT_PACING.minGapDays}-${ONGSHAT_PACING.maxGapDays} day gaps, ~${avgGap} avg) -- not exact`,
+    totalDays: Math.round(ongshatSequence.length * avgGap),
+    remainingDays: Math.round(remainingCount * avgGap),
+    finishAt: remainingCount > 0 ? new Date(now.getTime() + remainingCount * avgGap * DAY_MS).toISOString() : null,
+  };
 
   return {
     name: "Ong's Hat",
@@ -138,11 +211,11 @@ async function ongshatStatus() {
     started,
     total: ongshatSequence.length,
     sent: cursor,
-    remaining: Math.max(ongshatSequence.length - cursor, 0),
-    next: nextSendAt
-      ? { label: nextItem ? (nextItem.type === 'image' ? `(image: ${nextItem.file})` : nextItem.type) : '(sequence finished)', at: nextSendAt }
-      : null,
-    history: history.slice(-10).reverse(),
+    remaining: remainingCount,
+    next: nextItem ? { label: nextItem.label, at: nextItem.at } : null,
+    duration,
+    items,
+    history: history.slice().reverse(),
   };
 }
 

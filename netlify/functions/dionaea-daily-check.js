@@ -130,6 +130,21 @@ exports.handler = async function (event) {
     return { statusCode: 200, body: `${result.message} (next up)` };
   }
 
+  // ?jump_to=<schedule id> marks every item before it (in dayIndex/hour/
+  // minute order) as already sent, so the next real send is exactly
+  // that item -- lets you start (or restart) from any point instead of
+  // always the beginning. Add ?list=1 first to find the exact id.
+  if (params.jump_to !== undefined) {
+    const sorted = [...schedule].sort((a, b) => a.dayIndex - b.dayIndex || a.hour - b.hour || a.minute - b.minute);
+    const targetIdx = sorted.findIndex((i) => i.id === params.jump_to);
+    if (targetIdx === -1) {
+      return { statusCode: 404, body: `No item with id "${params.jump_to}". Add ?list=1 to see all valid ids.` };
+    }
+    const alreadySent = sorted.slice(0, targetIdx).map((i) => i.id);
+    await store.set(SENT_KEY, JSON.stringify(alreadySent));
+    return { statusCode: 200, body: `Jumped to: ${params.jump_to}. ${alreadySent.length} earlier items marked as already sent.` };
+  }
+
   // ?start=1 arms the chain. If no activation date exists yet (neither
   // in Blobs nor as an env var), this also sets one to right now, so the
   // schedule actually has a day zero to count from. This is what the

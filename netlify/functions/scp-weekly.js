@@ -4,6 +4,7 @@ const sendOrder = require('../../data/scp-send-order.json');
 const { fetchScpContent } = require('../../lib/fetchScpContent');
 const { sendEmail } = require('../../lib/sendEmail');
 const { appendHistory } = require('../../lib/historyLog');
+const { scp: PACING } = require('../../lib/pacing');
 
 const SENT_KEY = 'sent-urls';
 const NEXT_SEND_KEY = 'next-send-at';
@@ -12,9 +13,10 @@ const STARTED_KEY = 'started';
 const { denverWallTimeToUTC } = require('../../lib/denverTime');
 
 // Sporadic gap between sends: 1-8 days (average ~4.5), not tied to a
-// fixed weekly schedule.
-const MIN_GAP_DAYS = 1;
-const MAX_GAP_DAYS = 8;
+// fixed weekly schedule. Values live in lib/pacing.js so status.js's
+// duration estimate always matches what's actually happening here.
+const MIN_GAP_DAYS = PACING.minGapDays;
+const MAX_GAP_DAYS = PACING.maxGapDays;
 
 /**
  * Picks a random Montana-local send time: never between 11:00 PM and
@@ -165,6 +167,21 @@ exports.handler = async function (event) {
       html,
     });
     return { statusCode: 200, body: `SENT [TEST]: ${entry.title} (${entry.url}) -- next up` };
+  }
+
+  // ?jump_to=<url> marks every entry before that url (in sendOrder) as
+  // already sent, so the next real send is exactly that entry -- lets
+  // you start (or restart) from any point instead of always the
+  // beginning. Add ?list=1 first to find the exact url to use.
+  if (params.jump_to !== undefined) {
+    const targetIdx = sendOrder.indexOf(params.jump_to);
+    if (targetIdx === -1) {
+      return { statusCode: 404, body: `No entry with url "${params.jump_to}". Add ?list=1 to see all valid urls.` };
+    }
+    const alreadySent = sendOrder.slice(0, targetIdx);
+    await store.set(SENT_KEY, JSON.stringify(alreadySent));
+    const entry = byUrl[params.jump_to];
+    return { statusCode: 200, body: `Jumped to: ${entry.title}. ${alreadySent.length} earlier entries marked as already sent.` };
   }
 
   // ?start=1 arms the chain -- the scheduled check below does nothing
