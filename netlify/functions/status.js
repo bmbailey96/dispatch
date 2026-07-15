@@ -2,7 +2,7 @@ const { getStore, connectLambda } = require('@netlify/blobs');
 const { readHistory } = require('../../lib/historyLog');
 const { getPaused } = require('../../lib/pauseState');
 const { denverWallTimeToUTC } = require('../../lib/denverTime');
-const { ongshat: ONGSHAT_PACING, scp: SCP_PACING } = require('../../lib/pacing');
+const { ongshat: ONGSHAT_PACING, scp: SCP_PACING, getEffectiveGap } = require('../../lib/pacing');
 
 const schedule = require('../../data/schedule.json');
 const scpSendOrder = require('../../data/scp-send-order.json');
@@ -120,7 +120,8 @@ async function scpStatus() {
   }
   const history = await readHistory(store);
   const sentSet = new Set(sentUrls);
-  const avgGap = (SCP_PACING.minGapDays + SCP_PACING.maxGapDays) / 2;
+  const gap = await getEffectiveGap(store, SCP_PACING);
+  const avgGap = (gap.minGapDays + gap.maxGapDays) / 2;
 
   const now = new Date();
   let cursorDate = nextSendAt ? new Date(nextSendAt) : now;
@@ -131,7 +132,7 @@ async function scpStatus() {
 
   const duration = {
     mode: 'estimate',
-    note: `average pacing (${SCP_PACING.minGapDays}-${SCP_PACING.maxGapDays} day gaps, ~${avgGap} avg) -- not exact`,
+    note: `average pacing (${gap.minGapDays}-${gap.maxGapDays} day gaps, ~${avgGap} avg) -- not exact`,
     totalDays: Math.round(scpSendOrder.length * avgGap),
     remainingDays: Math.round(remainingCount * avgGap),
     finishAt: remainingCount > 0 ? new Date(now.getTime() + remainingCount * avgGap * DAY_MS).toISOString() : null,
@@ -147,6 +148,7 @@ async function scpStatus() {
     remaining: remainingCount,
     next: nextItem ? { label: nextItem.label, at: nextItem.at } : null,
     duration,
+    gap: { min: gap.minGapDays, max: gap.maxGapDays, overridden: gap.overridden },
     items,
     history: history.slice().reverse(),
   };
@@ -185,7 +187,8 @@ async function ongshatStatus() {
     // not scheduled yet
   }
   const history = await readHistory(store);
-  const avgGap = (ONGSHAT_PACING.minGapDays + ONGSHAT_PACING.maxGapDays) / 2;
+  const gap = await getEffectiveGap(store, ONGSHAT_PACING);
+  const avgGap = (gap.minGapDays + gap.maxGapDays) / 2;
   const now = new Date();
 
   let runningDate = nextSendAt ? new Date(nextSendAt) : now;
@@ -205,7 +208,7 @@ async function ongshatStatus() {
 
   const duration = {
     mode: 'estimate',
-    note: `average pacing (${ONGSHAT_PACING.minGapDays}-${ONGSHAT_PACING.maxGapDays} day gaps, ~${avgGap} avg) -- not exact`,
+    note: `average pacing (${gap.minGapDays}-${gap.maxGapDays} day gaps, ~${avgGap} avg) -- not exact`,
     totalDays: Math.round(ongshatSequence.length * avgGap),
     remainingDays: Math.round(remainingCount * avgGap),
     finishAt: remainingCount > 0 ? new Date(now.getTime() + remainingCount * avgGap * DAY_MS).toISOString() : null,
@@ -221,6 +224,7 @@ async function ongshatStatus() {
     remaining: remainingCount,
     next: nextItem ? { label: nextItem.label, at: nextItem.at } : null,
     duration,
+    gap: { min: gap.minGapDays, max: gap.maxGapDays, overridden: gap.overridden },
     items,
     history: history.slice().reverse(),
   };
