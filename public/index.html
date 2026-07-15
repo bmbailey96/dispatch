@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DISPATCH</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #1c1a16;
+    --paper-raised: #26231d;
+    --ink: #e9e0c8;
+    --ink-dim: #a89f88;
+    --rule: #3a362c;
+    --signal: #c1502f;
+    --signal-dim: #7a3521;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'IBM Plex Mono', 'Courier New', monospace;
+    padding: 0 0 60px;
+    min-height: 100vh;
+  }
+  header {
+    padding: 32px 20px 20px;
+    border-bottom: 1px solid var(--rule);
+  }
+  header h1 {
+    font-family: 'Space Mono', monospace;
+    font-size: 15px;
+    letter-spacing: 0.32em;
+    margin: 0 0 6px;
+    color: var(--ink);
+  }
+  header p {
+    margin: 0;
+    font-size: 12px;
+    color: var(--ink-dim);
+    letter-spacing: 0.02em;
+  }
+  .dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--signal);
+    margin-right: 8px;
+    animation: pulse 2.4s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  main {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 24px 16px 0;
+  }
+  .card {
+    background: var(--paper-raised);
+    border: 1px solid var(--rule);
+    padding: 20px 18px;
+    margin-bottom: 20px;
+  }
+  .card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 14px;
+  }
+  .card-head h2 {
+    font-family: 'Space Mono', monospace;
+    font-size: 16px;
+    margin: 0;
+    letter-spacing: 0.02em;
+  }
+  .count {
+    font-size: 12px;
+    color: var(--ink-dim);
+  }
+  .count b { color: var(--ink); font-weight: 500; }
+  .meter {
+    height: 6px;
+    background: var(--rule);
+    margin-bottom: 14px;
+    position: relative;
+    overflow: hidden;
+  }
+  .meter-fill {
+    height: 100%;
+    background: var(--signal);
+    transition: width 0.4s ease;
+  }
+  .next {
+    font-size: 13px;
+    color: var(--ink);
+    margin-bottom: 4px;
+  }
+  .next .label { color: var(--ink-dim); }
+  .next-detail {
+    font-size: 12px;
+    color: var(--ink-dim);
+    margin-bottom: 14px;
+  }
+  .history {
+    border-top: 1px solid var(--rule);
+    padding-top: 12px;
+    margin-top: 4px;
+  }
+  .history-title {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    color: var(--ink-dim);
+    margin-bottom: 8px;
+  }
+  .history-row {
+    display: flex;
+    gap: 10px;
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--ink-dim);
+  }
+  .history-row .when { flex-shrink: 0; color: var(--signal-dim); }
+  .history-row .what {
+    color: var(--ink);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .empty-note {
+    font-size: 12px;
+    color: var(--ink-dim);
+    font-style: italic;
+  }
+  .live-tag {
+    display: inline-flex;
+    align-items: center;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--signal);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  .live-tag.not-live {
+    color: var(--ink-dim);
+  }
+  .live-tag.not-live .dot { display: none; }
+  .actions {
+    display: flex;
+    gap: 10px;
+    margin: 4px 0 8px;
+  }
+  .action-btn {
+    background: none;
+    border: 1px solid var(--rule);
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    padding: 7px 12px;
+    cursor: pointer;
+  }
+  .action-btn:hover { border-color: var(--signal); }
+  .action-btn:disabled { opacity: 0.5; cursor: default; }
+  .action-btn.start-btn {
+    border-color: var(--signal-dim);
+    color: var(--signal);
+  }
+  .action-result {
+    font-size: 11px;
+    color: var(--ink-dim);
+    min-height: 14px;
+    margin-bottom: 10px;
+    word-break: break-word;
+  }
+  .action-result.ok { color: var(--ink); }
+  .action-result.err { color: var(--signal); }
+  .refresh-line {
+    text-align: center;
+    font-size: 11px;
+    color: var(--ink-dim);
+    padding: 20px 0 0;
+  }
+  .refresh-line button {
+    background: none;
+    border: 1px solid var(--rule);
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 11px;
+    padding: 6px 14px;
+    cursor: pointer;
+  }
+  .refresh-line button:hover { border-color: var(--signal); }
+  .error-banner {
+    background: var(--paper-raised);
+    border: 1px solid var(--signal-dim);
+    padding: 14px 16px;
+    font-size: 12px;
+    color: var(--ink-dim);
+    margin-bottom: 20px;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1><span class="dot" aria-hidden="true"></span>DISPATCH</h1>
+    <p id="asOf">reading current state&hellip;</p>
+  </header>
+  <main id="main">
+    <div class="empty-note" style="padding:20px 0;">Loading&hellip;</div>
+  </main>
+  <div class="refresh-line">
+    <button onclick="load()">refresh</button>
+  </div>
+
+<script>
+function fmtWhen(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  const now = new Date();
+  const diffMs = d - now;
+  const diffDays = Math.round(diffMs / 86400000);
+  const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  let rel = '';
+  if (diffMs > 0) {
+    if (diffDays === 0) rel = 'today';
+    else if (diffDays === 1) rel = 'tomorrow';
+    else rel = `in ${diffDays} days`;
+  } else {
+    rel = 'overdue';
+  }
+  return `${dateStr}, ${timeStr} (${rel})`;
+}
+
+function fmtHistoryWhen(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' });
+}
+
+function renderCard(drip) {
+  const pct = drip.total > 0 ? Math.round((drip.sent / drip.total) * 100) : 0;
+  const nextHtml = drip.next
+    ? `<div class="next"><span class="label">next: </span>${fmtWhen(drip.next.at)}</div>
+       <div class="next-detail">${escapeHtml(drip.next.label || '')}</div>`
+    : `<div class="next-detail" style="margin-bottom:14px;">${drip.started ? 'not currently scheduled' : 'not started yet'}</div>`;
+
+  const historyHtml = drip.history && drip.history.length
+    ? drip.history.map(h => `
+        <div class="history-row">
+          <span class="when">${fmtHistoryWhen(h.at)}</span>
+          <span class="what">${escapeHtml(h.label || '')}</span>
+        </div>`).join('')
+    : `<div class="empty-note">nothing sent yet</div>`;
+
+  const statusHtml = drip.started
+    ? `<span class="live-tag"><span class="dot" aria-hidden="true"></span>live</span>`
+    : `<span class="live-tag not-live">not started</span>`;
+
+  const startBtnHtml = drip.started
+    ? ''
+    : `<button class="action-btn start-btn" data-endpoint="${drip.endpoint}" onclick="startDrip(this)">start chain</button>`;
+
+  return `
+    <div class="card">
+      <div class="card-head">
+        <h2>${escapeHtml(drip.name)}</h2>
+        <span class="count"><b>${drip.sent}</b> / ${drip.total}</span>
+      </div>
+      <div class="meter"><div class="meter-fill" style="width:${pct}%"></div></div>
+      ${statusHtml}
+      ${nextHtml}
+      <div class="actions">
+        <button class="action-btn" data-endpoint="${drip.endpoint}" onclick="testDrip(this)">test next</button>
+        ${startBtnHtml}
+      </div>
+      <div class="action-result" id="result-${drip.endpoint}"></div>
+      <div class="history">
+        <div class="history-title">RECENT</div>
+        ${historyHtml}
+      </div>
+    </div>`;
+}
+
+async function testDrip(btn) {
+  const endpoint = btn.dataset.endpoint;
+  const resultEl = document.getElementById('result-' + endpoint);
+  btn.disabled = true;
+  btn.textContent = 'sending\u2026';
+  resultEl.textContent = '';
+  try {
+    const res = await fetch(`/.netlify/functions/${endpoint}?test_next=1`);
+    const text = await res.text();
+    resultEl.textContent = text;
+    resultEl.className = 'action-result ok';
+  } catch (err) {
+    resultEl.textContent = 'Failed: ' + err.message;
+    resultEl.className = 'action-result err';
+  }
+  btn.disabled = false;
+  btn.textContent = 'test next';
+}
+
+async function startDrip(btn) {
+  const endpoint = btn.dataset.endpoint;
+  const resultEl = document.getElementById('result-' + endpoint);
+  if (!confirm('Start this chain for real? It will begin sending on its normal schedule from now on.')) return;
+  btn.disabled = true;
+  btn.textContent = 'starting\u2026';
+  try {
+    const res = await fetch(`/.netlify/functions/${endpoint}?start=1`);
+    const text = await res.text();
+    resultEl.textContent = text;
+    resultEl.className = 'action-result ok';
+    setTimeout(load, 1200);
+  } catch (err) {
+    resultEl.textContent = 'Failed: ' + err.message;
+    resultEl.className = 'action-result err';
+    btn.disabled = false;
+    btn.textContent = 'start chain';
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function load() {
+  const main = document.getElementById('main');
+  const asOf = document.getElementById('asOf');
+  asOf.textContent = 'reading current state\u2026';
+  try {
+    const res = await fetch('/.netlify/functions/status');
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const data = await res.json();
+    main.innerHTML = data.drips.map(renderCard).join('');
+    asOf.textContent = 'as of ' + new Date(data.generatedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  } catch (err) {
+    main.innerHTML = `<div class="error-banner">Couldn't read status: ${escapeHtml(err.message)}</div>`;
+    asOf.textContent = 'last attempt failed';
+  }
+}
+
+load();
+</script>
+</body>
+</html>
