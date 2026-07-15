@@ -1,0 +1,22 @@
+[build]
+  command = "echo no build step needed"
+  publish = "public"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+[functions."dionaea-daily-check"]
+  schedule = "*/15 * * * *"
+  included_files = ["content/*.txt"]
+
+[functions."scp-weekly"]
+  schedule = "*/30 * * * *"
+
+[functions."ongshat-check"]
+  # Checked every 30 min; the function itself decides whether it's actually
+  # due based on the stored next-send-at timestamp.
+  schedule = "*/30 * * * *"
+
+# status.js is not scheduled -- it's called on-demand by the dashboard
+# frontend (public/index.html) whenever the page loads or is refreshed.

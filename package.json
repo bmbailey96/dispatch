@@ -1,0 +1,12 @@
+{
+  "name": "dispatch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Status dashboard and scheduled senders for three automated fiction email drips: Dionaea House, SCP Weekly, and Ong's Hat.",
+  "dependencies": {
+    "@netlify/blobs": "^10.7.9"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
