@@ -1,0 +1,48 @@
+from: Postmaster
+date: Friday, October 1, 2004 1:30 PM
+subject: Undeliverable Mail
+Unknown user: x
+RCPT TO generated following response: 550 unknown user
+<x@x.x>
+Original message follows.
+> from: x@x.x
+> date: Friday, October 1, 2004 12:47 PM
+> subject: (No Subject)
+>
+> HUMAN ARM AND LEG BONES FOUND ON STREET
+>
+> Scottsdale residents got a shock at the start of their
+morning commute
+> when they found what seems to be human bones lying in the
+road on Sage Drive.
+>
+> Crime scene technicians arrived within half an hour and
+began to sweep
+> the scene for more evidence that might help identify this
+human victim,
+> or at least establish an approximate time of death.
+Police spokesman
+> Daniel Swift said bone evidence alone isn’t usually
+enough to determine
+> identity or even cause of death.
+>
+> “These remains didn’t just appear in the road. They were
+moved here,”
+> Swift said. “Therefore we’re asking any witnesses to
+contact the police
+> with information that might pertain to what happened.” No
+other evidence
+> was found along Sage street or in yards of neighboring
+homes. More on
+> this story as it develops.
+>
+>
+-------------------------------------------------------------------------
+> Whoever you are, whatever you are,
+> Fuck you. I may not know you, but I can tell what this
+is,
+> and I’m not fooled. Your venus fly-trap game won’t work.
+> I’ll make damn sure to warn Jenny and others, too. So,
+> nice try, but no one is falling for your bait this time.
+>
+> It stops here.
