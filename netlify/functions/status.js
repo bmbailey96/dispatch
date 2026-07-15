@@ -1,5 +1,6 @@
 const { getStore, connectLambda } = require('@netlify/blobs');
 const { readHistory } = require('../../lib/historyLog');
+const { getPaused } = require('../../lib/pauseState');
 const { denverWallTimeToUTC } = require('../../lib/denverTime');
 const { ongshat: ONGSHAT_PACING, scp: SCP_PACING } = require('../../lib/pacing');
 
@@ -35,6 +36,7 @@ function daysBetween(a, b) {
 async function dionaeaStatus() {
   const store = getStore('dionaea-house-history');
   const started = await getStarted(store);
+  const paused = await getPaused(store);
 
   let sentIds = [];
   try {
@@ -86,6 +88,7 @@ async function dionaeaStatus() {
     name: 'Dionaea House',
     endpoint: 'dionaea-daily-check',
     started,
+    paused,
     total: schedule.length,
     sent: sentIds.length,
     remaining: schedule.length - sentIds.length,
@@ -99,6 +102,7 @@ async function dionaeaStatus() {
 async function scpStatus() {
   const store = getStore('scp-weekly-history');
   const started = await getStarted(store);
+  const paused = await getPaused(store);
 
   let sentUrls = [];
   try {
@@ -137,6 +141,7 @@ async function scpStatus() {
     name: 'SCP Weekly',
     endpoint: 'scp-weekly',
     started,
+    paused,
     total: scpSendOrder.length,
     sent: sentUrls.length,
     remaining: remainingCount,
@@ -163,6 +168,7 @@ function sendOrderWithEstimates(order, sentSet, byKey, startDate, avgGap, labelF
 async function ongshatStatus() {
   const store = getStore('ongshat-drip-history');
   const started = await getStarted(store);
+  const paused = await getPaused(store);
 
   let cursor = 0;
   try {
@@ -209,6 +215,7 @@ async function ongshatStatus() {
     name: "Ong's Hat",
     endpoint: 'ongshat-check',
     started,
+    paused,
     total: ongshatSequence.length,
     sent: cursor,
     remaining: remainingCount,

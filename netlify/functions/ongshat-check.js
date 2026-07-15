@@ -4,6 +4,7 @@ const { sendEmail } = require('../../lib/sendEmail');
 const { buildOngshatEmailHtml, buildSubject } = require('../../lib/buildOngshatEmailHtml');
 const { denverWallTimeToUTC } = require('../../lib/denverTime');
 const { appendHistory } = require('../../lib/historyLog');
+const { getPaused, pauseNow, resumeAndGetPausedMs } = require('../../lib/pauseState');
 const { ongshat: PACING } = require('../../lib/pacing');
 
 // Recomputed from the actual sequence rather than hardcoded, since this
@@ -118,6 +119,54 @@ exports.handler = async function (event) {
     };
   }
 
+  // ?pause=1 / ?resume=1 -- pausing freezes the chain: the scheduled
+  // check skips while paused, and resuming shifts the pending gap
+  // forward by the pause duration, so the next item lands as far out as
+  // it would have when you paused, not instantly.
+  if (params.pause !== undefined) {
+    const did = await pauseNow(store);
+    return { statusCode: 200, body: did ? 'Paused.' : 'Already paused.' };
+  }
+
+  if (params.resume !== undefined) {
+    const pausedMs = await resumeAndGetPausedMs(store);
+    if (pausedMs === null) return { statusCode: 200, body: 'Not paused.' };
+    try {
+      const raw = await store.get(NEXT_SEND_KEY, { type: 'text' });
+      if (raw) {
+        const shifted = new Date(new Date(raw).getTime() + pausedMs);
+        await store.set(NEXT_SEND_KEY, shifted.toISOString());
+      }
+    } catch (err) {
+      // no next-send-at yet -- nothing to shift
+    }
+    return { statusCode: 200, body: `Resumed. Schedule shifted forward by ${Math.round(pausedMs / 3600000)}h.` };
+  }
+
+  // ?send_now=1 -- a REAL send of the next item, right now: advances
+  // the cursor, logs history, and reschedules the following item from
+  // this moment using normal pacing. Unlike test_next this counts.
+  if (params.send_now !== undefined) {
+    let cursor = 0;
+    try {
+      const raw = await store.get(CURSOR_KEY, { type: 'text' });
+      if (raw !== null) cursor = parseInt(raw, 10);
+    } catch (err) {
+      // first run
+    }
+    const item = sequence[cursor];
+    if (!item) return { statusCode: 200, body: 'Sequence finished. Nothing left to send.' };
+    const now = new Date();
+    const html = buildOngshatEmailHtml({ item, siteUrl, total: TOTAL_TEXT_ITEMS });
+    const subject = buildSubject(item, TOTAL_TEXT_ITEMS);
+    await sendEmail({ to: process.env.ONGSHAT_TO_EMAIL || process.env.DIGEST_TO_EMAIL, subject, html });
+    const next = randomNextSendTime(now);
+    await store.set(CURSOR_KEY, String(cursor + 1));
+    await store.set(NEXT_SEND_KEY, next.toISOString());
+    await appendHistory(store, { at: now.toISOString(), label: subject, type: item.type });
+    return { statusCode: 200, body: `Sent for real: index ${cursor} (${item.type}). Next send scheduled for ${next.toISOString()}.` };
+  }
+
   // ?start=1 arms the chain -- until this has been called once, the
   // scheduled cron check below does nothing, even though it still runs
   // every 30 minutes. This is what the dashboard's "start" button calls.
@@ -145,6 +194,10 @@ exports.handler = async function (event) {
     }
     if (started !== 'true') {
       return { statusCode: 200, body: 'Not started yet.' };
+    }
+
+    if (await getPaused(store)) {
+      return { statusCode: 200, body: 'Paused.' };
     }
 
     let cursor = 0;

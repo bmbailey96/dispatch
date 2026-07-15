@@ -4,6 +4,7 @@ const sendOrder = require('../../data/scp-send-order.json');
 const { fetchScpContent } = require('../../lib/fetchScpContent');
 const { sendEmail } = require('../../lib/sendEmail');
 const { appendHistory } = require('../../lib/historyLog');
+const { getPaused, pauseNow, resumeAndGetPausedMs } = require('../../lib/pauseState');
 const { scp: PACING } = require('../../lib/pacing');
 
 const SENT_KEY = 'sent-urls';
@@ -184,6 +185,44 @@ exports.handler = async function (event) {
     return { statusCode: 200, body: `Jumped to: ${entry.title}. ${alreadySent.length} earlier entries marked as already sent.` };
   }
 
+  // ?pause=1 / ?resume=1 -- pausing freezes the chain; resuming shifts
+  // the pending gap forward by the pause duration so nothing fires
+  // instantly on resume.
+  if (params.pause !== undefined) {
+    const did = await pauseNow(store);
+    return { statusCode: 200, body: did ? 'Paused.' : 'Already paused.' };
+  }
+
+  if (params.resume !== undefined) {
+    const pausedMs = await resumeAndGetPausedMs(store);
+    if (pausedMs === null) return { statusCode: 200, body: 'Not paused.' };
+    try {
+      const raw = await store.get(NEXT_SEND_KEY, { type: 'text' });
+      if (raw) {
+        const shifted = new Date(new Date(raw).getTime() + pausedMs);
+        await store.set(NEXT_SEND_KEY, shifted.toISOString());
+      }
+    } catch (err) {
+      // no next-send-at yet -- nothing to shift
+    }
+    return { statusCode: 200, body: `Resumed. Schedule shifted forward by ${Math.round(pausedMs / 3600000)}h.` };
+  }
+
+  // ?send_now=1 -- a REAL send of the next entry, right now: marks it
+  // sent, logs history, reschedules the following one from this moment.
+  if (params.send_now !== undefined) {
+    const now = new Date();
+    const entry = await pickNextEntry(store);
+    const content = await fetchScpContent(entry.url);
+    const html = buildEmailHtml({ entry, content });
+    const subject = `Declassified: ${entry.title}`;
+    await sendEmail({ to: process.env.SCP_TO_EMAIL || process.env.DIGEST_TO_EMAIL, subject, html });
+    const next = randomNextSendTime(now);
+    await store.set(NEXT_SEND_KEY, next.toISOString());
+    await appendHistory(store, { at: now.toISOString(), label: entry.title, url: entry.url });
+    return { statusCode: 200, body: `Sent for real: ${entry.title}. Next send scheduled for ${next.toISOString()}.` };
+  }
+
   // ?start=1 arms the chain -- the scheduled check below does nothing
   // until this has been called once, even though it still runs on its
   // usual cadence. This is what the dashboard's "start" button calls.
@@ -210,6 +249,10 @@ exports.handler = async function (event) {
     }
     if (started !== 'true') {
       return { statusCode: 200, body: 'Not started yet.' };
+    }
+
+    if (await getPaused(store)) {
+      return { statusCode: 200, body: 'Paused.' };
     }
 
     const now = new Date();

@@ -6,6 +6,7 @@ const { sendEmail } = require('../../lib/sendEmail');
 const { buildEmailHtml } = require('../../lib/buildEmailHtml');
 const { denverWallTimeToUTC } = require('../../lib/denverTime');
 const { appendHistory } = require('../../lib/historyLog');
+const { getPaused, pauseNow, resumeAndGetPausedMs } = require('../../lib/pauseState');
 
 const SENT_KEY = 'sent-item-ids';
 const STARTED_KEY = 'started';
@@ -145,6 +146,61 @@ exports.handler = async function (event) {
     return { statusCode: 200, body: `Jumped to: ${params.jump_to}. ${alreadySent.length} earlier items marked as already sent.` };
   }
 
+  // ?pause=1 / ?resume=1 -- Dionaea's whole schedule hangs off the
+  // activation date, so resuming slides that date forward by the pause
+  // duration. Without the slide, every item that came due during the
+  // pause would flood out at once on the first check after resume.
+  if (params.pause !== undefined) {
+    const did = await pauseNow(store);
+    return { statusCode: 200, body: did ? 'Paused.' : 'Already paused.' };
+  }
+
+  if (params.resume !== undefined) {
+    const pausedMs = await resumeAndGetPausedMs(store);
+    if (pausedMs === null) return { statusCode: 200, body: 'Not paused.' };
+    const parts = await getActivationDateParts(store);
+    if (parts) {
+      const shiftDays = Math.round(pausedMs / (24 * 60 * 60 * 1000));
+      const d = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+      d.setUTCDate(d.getUTCDate() + shiftDays);
+      const iso = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+      // Written to Blobs, which wins over the env var in the resolution
+      // order -- so this works even if the original date came from
+      // DIONAEA_ACTIVATION_DATE.
+      await store.set(ACTIVATION_KEY, iso);
+      return { statusCode: 200, body: `Resumed. Activation date slid forward ${shiftDays} day(s) to ${iso}.` };
+    }
+    return { statusCode: 200, body: 'Resumed. (No activation date existed yet, nothing to shift.)' };
+  }
+
+  // ?send_now=1 -- a REAL send of the earliest unsent item, right now,
+  // regardless of whether it's due yet: marks it sent and logs history.
+  // The rest of the schedule is untouched (it's date-anchored).
+  if (params.send_now !== undefined) {
+    let sentIdsNow = [];
+    try {
+      const raw = await store.get(SENT_KEY, { type: 'json' });
+      if (Array.isArray(raw)) sentIdsNow = raw;
+    } catch (err) {
+      // no history yet
+    }
+    const sentSetNow = new Set(sentIdsNow);
+    const upcomingNow = schedule
+      .filter((i) => !sentSetNow.has(i.id))
+      .sort((a, b) => a.dayIndex - b.dayIndex || a.hour - b.hour || a.minute - b.minute);
+    if (upcomingNow.length === 0) {
+      return { statusCode: 200, body: 'Nothing left to send.' };
+    }
+    const item = upcomingNow[0];
+    const result = await sendOne(item, { testMode: false });
+    if (result.ok) {
+      sentSetNow.add(item.id);
+      await store.set(SENT_KEY, JSON.stringify([...sentSetNow]));
+      await appendHistory(store, { at: new Date().toISOString(), label: item.subject, type: item.type, id: item.id });
+    }
+    return { statusCode: 200, body: `${result.message} (sent for real)` };
+  }
+
   // ?start=1 arms the chain. If no activation date exists yet (neither
   // in Blobs nor as an env var), this also sets one to right now, so the
   // schedule actually has a day zero to count from. This is what the
@@ -178,6 +234,10 @@ exports.handler = async function (event) {
   }
   if (started !== 'true') {
     return { statusCode: 200, body: 'Not started yet.' };
+  }
+
+  if (await getPaused(store)) {
+    return { statusCode: 200, body: 'Paused.' };
   }
 
   let sentIds = [];
