@@ -5,7 +5,7 @@ const { fetchScpContent } = require('../../lib/fetchScpContent');
 const { sendEmail } = require('../../lib/sendEmail');
 const { appendHistory } = require('../../lib/historyLog');
 const { getPaused, pauseNow, resumeAndGetPausedMs } = require('../../lib/pauseState');
-const { scp: PACING } = require('../../lib/pacing');
+const { scp: PACING, getEffectiveGap } = require('../../lib/pacing');
 
 const SENT_KEY = 'sent-urls';
 const NEXT_SEND_KEY = 'next-send-at';
@@ -26,8 +26,8 @@ const MAX_GAP_DAYS = PACING.maxGapDays;
  * Converted to the correct UTC instant via the DST-aware helper, since
  * this schedule can run for years and will cross many DST transitions.
  */
-function randomNextSendTime(from) {
-  const gapDays = MIN_GAP_DAYS + Math.random() * (MAX_GAP_DAYS - MIN_GAP_DAYS);
+function randomNextSendTime(from, gap) {
+  const gapDays = gap.minGapDays + Math.random() * (gap.maxGapDays - gap.minGapDays);
   let target = new Date(from.getTime() + gapDays * 24 * 60 * 60 * 1000);
 
   // Allowed window: 8:00 AM - 11:00 PM Montana time (15 hours). Within
@@ -185,6 +185,22 @@ exports.handler = async function (event) {
     return { statusCode: 200, body: `Jumped to: ${entry.title}. ${alreadySent.length} earlier entries marked as already sent.` };
   }
 
+  // ?set_gap=min,max (days) overrides this drip's pacing at runtime;
+  // ?set_gap=default clears the override. Affects every send scheduled
+  // from now on; the one already scheduled keeps its time.
+  if (params.set_gap !== undefined) {
+    if (params.set_gap === 'default') {
+      await store.set('gap-override', '');
+      return { statusCode: 200, body: `Pacing reset to default (${PACING.minGapDays}-${PACING.maxGapDays} day gaps).` };
+    }
+    const [min, max] = String(params.set_gap).split(',').map(Number);
+    if (!isFinite(min) || !isFinite(max) || min < 0.1 || max > 45 || max < min) {
+      return { statusCode: 400, body: 'set_gap wants min,max in days: 0.1 <= min <= max <= 45. Or set_gap=default.' };
+    }
+    await store.set('gap-override', JSON.stringify({ min, max }));
+    return { statusCode: 200, body: `Pacing set: ${min}-${max} day gaps from the next scheduling onward.` };
+  }
+
   // ?pause=1 / ?resume=1 -- pausing freezes the chain; resuming shifts
   // the pending gap forward by the pause duration so nothing fires
   // instantly on resume.
@@ -217,7 +233,8 @@ exports.handler = async function (event) {
     const html = buildEmailHtml({ entry, content });
     const subject = `Declassified: ${entry.title}`;
     await sendEmail({ to: process.env.SCP_TO_EMAIL || process.env.DIGEST_TO_EMAIL, subject, html });
-    const next = randomNextSendTime(now);
+    const gap = await getEffectiveGap(store, PACING);
+    const next = randomNextSendTime(now, gap);
     await store.set(NEXT_SEND_KEY, next.toISOString());
     await appendHistory(store, { at: now.toISOString(), label: entry.title, url: entry.url });
     return { statusCode: 200, body: `Sent for real: ${entry.title}. Next send scheduled for ${next.toISOString()}.` };
@@ -277,7 +294,8 @@ exports.handler = async function (event) {
     await sendEmail({ to: process.env.SCP_TO_EMAIL || process.env.DIGEST_TO_EMAIL, subject, html });
 
     // Schedule the next one: 1-8 days out, at a genuinely random hour.
-    const next = randomNextSendTime(now);
+    const gap = await getEffectiveGap(store, PACING);
+    const next = randomNextSendTime(now, gap);
     await store.set(NEXT_SEND_KEY, next.toISOString());
     await appendHistory(store, { at: now.toISOString(), label: entry.title, url: entry.url });
 

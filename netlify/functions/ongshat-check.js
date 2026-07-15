@@ -5,7 +5,7 @@ const { buildOngshatEmailHtml, buildSubject } = require('../../lib/buildOngshatE
 const { denverWallTimeToUTC } = require('../../lib/denverTime');
 const { appendHistory } = require('../../lib/historyLog');
 const { getPaused, pauseNow, resumeAndGetPausedMs } = require('../../lib/pauseState');
-const { ongshat: PACING } = require('../../lib/pacing');
+const { ongshat: PACING, getEffectiveGap } = require('../../lib/pacing');
 
 // Recomputed from the actual sequence rather than hardcoded, since this
 // number has already grown once and may grow again -- it's all one
@@ -31,8 +31,8 @@ const MAX_GAP_DAYS = PACING.maxGapDays;
  * so an unexplained fragment never arrives at 3am and gives itself away
  * as an automated thing.
  */
-function randomNextSendTime(from) {
-  const gapDays = MIN_GAP_DAYS + Math.random() * (MAX_GAP_DAYS - MIN_GAP_DAYS);
+function randomNextSendTime(from, gap) {
+  const gapDays = gap.minGapDays + Math.random() * (gap.maxGapDays - gap.minGapDays);
   const target = new Date(from.getTime() + gapDays * 24 * 60 * 60 * 1000);
 
   let hour;
@@ -119,6 +119,22 @@ exports.handler = async function (event) {
     };
   }
 
+  // ?set_gap=min,max (days) overrides this drip's pacing at runtime;
+  // ?set_gap=default clears the override. Affects every send scheduled
+  // from now on; the one already scheduled keeps its time.
+  if (params.set_gap !== undefined) {
+    if (params.set_gap === 'default') {
+      await store.set('gap-override', '');
+      return { statusCode: 200, body: `Pacing reset to default (${PACING.minGapDays}-${PACING.maxGapDays} day gaps).` };
+    }
+    const [min, max] = String(params.set_gap).split(',').map(Number);
+    if (!isFinite(min) || !isFinite(max) || min < 0.1 || max > 45 || max < min) {
+      return { statusCode: 400, body: 'set_gap wants min,max in days: 0.1 <= min <= max <= 45. Or set_gap=default.' };
+    }
+    await store.set('gap-override', JSON.stringify({ min, max }));
+    return { statusCode: 200, body: `Pacing set: ${min}-${max} day gaps from the next scheduling onward.` };
+  }
+
   // ?pause=1 / ?resume=1 -- pausing freezes the chain: the scheduled
   // check skips while paused, and resuming shifts the pending gap
   // forward by the pause duration, so the next item lands as far out as
@@ -160,7 +176,8 @@ exports.handler = async function (event) {
     const html = buildOngshatEmailHtml({ item, siteUrl, total: TOTAL_TEXT_ITEMS });
     const subject = buildSubject(item, TOTAL_TEXT_ITEMS);
     await sendEmail({ to: process.env.ONGSHAT_TO_EMAIL || process.env.DIGEST_TO_EMAIL, subject, html });
-    const next = randomNextSendTime(now);
+    const gap = await getEffectiveGap(store, PACING);
+    const next = randomNextSendTime(now, gap);
     await store.set(CURSOR_KEY, String(cursor + 1));
     await store.set(NEXT_SEND_KEY, next.toISOString());
     await appendHistory(store, { at: now.toISOString(), label: subject, type: item.type });
@@ -231,7 +248,8 @@ exports.handler = async function (event) {
 
     await sendEmail({ to: process.env.ONGSHAT_TO_EMAIL || process.env.DIGEST_TO_EMAIL, subject, html });
 
-    const next = randomNextSendTime(now);
+    const gap = await getEffectiveGap(store, PACING);
+    const next = randomNextSendTime(now, gap);
     await store.set(CURSOR_KEY, String(cursor + 1));
     await store.set(NEXT_SEND_KEY, next.toISOString());
     await appendHistory(store, { at: now.toISOString(), label: subject, type: item.type });
