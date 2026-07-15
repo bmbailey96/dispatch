@@ -274,6 +274,111 @@
   }
   .mini-btn:hover { border-color: var(--signal); color: var(--ink); }
   .paused-tag { color: #c9a227; }
+  .pace-line {
+    font-size: 11px;
+    color: var(--ink-dim);
+    margin: 0 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .pace-btns { display: inline-flex; gap: 6px; }
+  .health-line {
+    font-size: 11px;
+    color: var(--ink-dim);
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .feed-row {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    font-size: 12px;
+    line-height: 2;
+  }
+  .feed-row.feed-paused { opacity: 0.4; }
+  .feed-when {
+    flex-shrink: 0;
+    width: 84px;
+    color: var(--signal-dim);
+  }
+  .feed-row .what { flex: 1; color: var(--ink); }
+  .feed-chain {
+    flex-shrink: 0;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    color: var(--ink-dim);
+    border: 1px solid var(--rule);
+    padding: 1px 5px;
+  }
+  .vtl {
+    border-left: 1px solid var(--ink-dim);
+    margin-left: 5px;
+    padding: 6px 0 2px;
+  }
+  .vt-day {
+    position: relative;
+    margin: 20px 0 10px 12px;
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--signal);
+    background: var(--paper-raised);
+    border: 1px solid var(--signal-dim);
+    padding: 4px 10px;
+  }
+  .vt-day::before {
+    content: '';
+    position: absolute;
+    left: -13px;
+    top: 50%;
+    width: 12px;
+    height: 1px;
+    background: var(--signal-dim);
+  }
+  .vt-seg {
+    position: relative;
+    margin: 0;
+  }
+  .vt-seg .vt-dot {
+    position: absolute;
+    left: -4px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--signal);
+    border: 1px solid var(--paper);
+  }
+  .vt-lead-h, .vt-lead-v {
+    position: absolute;
+    background: var(--rule);
+  }
+  .vt-lead-h { height: 1px; }
+  .vt-lead-v { width: 1px; }
+  .vt-seg .vt-body {
+    position: absolute;
+    font-size: 12px;
+    line-height: 1.5;
+    right: 0;
+  }
+  .vt-chain {
+    font-weight: 700;
+    color: var(--ink);
+    letter-spacing: 0.03em;
+  }
+  .vt-label { color: var(--ink-dim); }
+  .vt-chain::after { content: ' \2014 '; color: var(--ink-dim); font-weight: 400; }
+  .vt-time {
+    display: block;
+    font-size: 10px;
+    color: var(--signal-dim);
+    letter-spacing: 0.04em;
+  }
+  .vt-item.feed-paused { opacity: 0.4; }
   .tl-wrap {
     max-width: 640px;
     margin: 22px auto 0;
@@ -332,6 +437,18 @@
     border: 1px dashed var(--rule);
   }
   .tl-bar.tl-paused { opacity: 0.45; }
+  .tl-bar.tl-overflow {
+    -webkit-mask-image: linear-gradient(to right, black 82%, transparent 99%);
+    mask-image: linear-gradient(to right, black 82%, transparent 99%);
+  }
+  .tl-finish-in {
+    right: 4px;
+    left: auto !important;
+    color: var(--ink);
+    text-shadow: 0 0 4px rgba(0,0,0,0.7);
+  }
+  .tl-tick.tl-major .tl-tick-line { opacity: 1; background: var(--ink-dim); }
+  .tl-tick.tl-major .tl-tick-label { color: var(--ink); }
   .tl-finish {
     position: absolute;
     top: 0;
@@ -348,6 +465,7 @@
     <p id="asOf">reading current state&hellip;</p>
   </header>
   <div id="timeline"></div>
+  <div id="feed"></div>
   <main id="main">
     <div class="empty-note" style="padding:20px 0;">Loading&hellip;</div>
   </main>
@@ -390,6 +508,127 @@ let DRIPS = [];
  * length (anchored at today only because there's nothing else to anchor
  * to yet).
  */
+/**
+ * The "what do my next few weeks look like" view: every projected send
+ * across all three chains, merged and sorted by date, capped to the
+ * next 21 days. Dates are exact for Dionaea, estimates for the other
+ * two. Also a one-line health check: when anything last actually sent.
+ */
+function renderFeed(drips) {
+  const el = document.getElementById('feed');
+  const now = Date.now();
+  const DAY = 86400000;
+  const HORIZON = 21 * DAY;
+
+  // health: most recent real send across all chains
+  let lastSend = null;
+  drips.forEach((d) => {
+    (d.history || []).forEach((h) => {
+      if (!lastSend || new Date(h.at) > new Date(lastSend.at)) {
+        lastSend = { ...h, chain: d.name };
+      }
+    });
+  });
+  let healthHtml;
+  if (lastSend) {
+    const daysAgo = Math.floor((now - new Date(lastSend.at)) / DAY);
+    const ago = daysAgo === 0 ? 'today' : daysAgo === 1 ? 'yesterday' : `${daysAgo} days ago`;
+    healthHtml = `<div class="health-line">last send: ${escapeHtml(lastSend.label || '')} <span class="feed-chain">${escapeHtml(lastSend.chain)}</span> \u00b7 ${ago}</div>`;
+  } else {
+    healthHtml = `<div class="health-line">nothing has been sent yet</div>`;
+  }
+
+  const upcoming = [];
+  drips.forEach((d) => {
+    (d.items || []).forEach((i) => {
+      if (i.sent || !i.at) return;
+      const t = new Date(i.at).getTime();
+      if (t - now <= HORIZON) {
+        upcoming.push({
+          at: i.at, label: i.label, chain: d.name, paused: d.paused,
+          exact: d.endpoint === 'dionaea-daily-check',
+        });
+      }
+    });
+  });
+  upcoming.sort((a, b) => new Date(a.at) - new Date(b.at));
+
+  // group by calendar day
+  const days = [];
+  upcoming.slice(0, 30).forEach((u) => {
+    const d = new Date(u.at);
+    const key = d.toDateString();
+    let g = days[days.length - 1];
+    if (!g || g.key !== key) {
+      g = { key, date: d, items: [] };
+      days.push(g);
+    }
+    g.items.push(u);
+  });
+
+  // Each day is a segment of the spine, scaled to the clock: 24h of
+  // day = DAY_H px, so a 9 AM dot sits higher in the segment than a
+  // 9 PM one. Labels can't overlap, so when two sends land close
+  // together the later label is pushed down and its leader line
+  // extends (a little elbow) from the dot to wherever the label
+  // actually ended up.
+  const DAY_H = 144;        // 6px per hour
+  const LABEL_H = 40;       // two-line label + breathing room
+  const LABEL_X = 30;       // where label text starts, right of spine
+
+  const dayHtml = days.map((g) => {
+    // dot positions from time-of-day
+    const entries = g.items.map((u) => {
+      const d = new Date(u.at);
+      const frac = (d.getHours() * 3600 + d.getMinutes() * 60) / 86400;
+      return { ...u, dotY: Math.round(frac * DAY_H) };
+    });
+
+    // collision-resolve label positions top-down
+    let prevBottom = -Infinity;
+    entries.forEach((e) => {
+      e.labelY = Math.max(e.dotY - 8, prevBottom + 6);
+      prevBottom = e.labelY + LABEL_H - 6;
+    });
+    const segH = Math.max(DAY_H, prevBottom + 14);
+
+    const itemsHtml = entries.map((e) => {
+      const time = new Date(e.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      const displaced = e.labelY > e.dotY - 8 + 1;
+      // leader: horizontal stub at dot; if displaced, add a vertical
+      // drop + second stub reaching the label ("extend their lines")
+      let leader = `<span class="vt-lead-h" style="top:${e.dotY}px;left:4px;width:10px;"></span>`;
+      if (displaced) {
+        const elbowY = e.labelY + 10;
+        leader += `<span class="vt-lead-v" style="top:${e.dotY}px;left:14px;height:${elbowY - e.dotY}px;"></span>`;
+        leader += `<span class="vt-lead-h" style="top:${elbowY}px;left:14px;width:${LABEL_X - 16}px;"></span>`;
+      } else {
+        leader = `<span class="vt-lead-h" style="top:${e.dotY}px;left:4px;width:${LABEL_X - 6}px;"></span>`;
+      }
+      return `
+        <span class="vt-dot" style="top:${e.dotY - 3}px;" aria-hidden="true"></span>
+        ${leader}
+        <div class="vt-body${e.paused ? ' feed-paused' : ''}" style="top:${e.labelY}px;left:${LABEL_X}px;">
+          <span class="vt-chain">${escapeHtml(e.chain)}</span>
+          <span class="vt-label">${escapeHtml(e.label || '')}</span>
+          <span class="vt-time">${e.exact ? '' : '~'}${time}</span>
+        </div>`;
+    }).join('');
+
+    const dayLabel = g.date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+    return `
+      <div class="vt-day">${dayLabel}</div>
+      <div class="vt-seg" style="height:${segH}px;">${itemsHtml}</div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="tl-wrap">
+      <div class="tl-header">NEXT 3 WEEKS</div>
+      ${healthHtml}
+      <div class="vtl">${dayHtml || '<div class="empty-note">nothing scheduled in the next 3 weeks</div>'}</div>
+    </div>`;
+}
+
 function renderTimeline(drips) {
   const el = document.getElementById('timeline');
   const now = Date.now();
@@ -407,31 +646,63 @@ function renderTimeline(drips) {
 
   if (!spans.length) { el.innerHTML = ''; return; }
 
-  const maxDays = Math.max(...spans.map((s) => s.days)) * 1.05;
+  // ---- window: fit the SHORTER chains readably; anything much longer
+  // than the rest just runs off the right edge with an arrow, instead of
+  // flattening everything else into slivers (SCP alone is ~7 years).
+  const sorted = spans.map((s) => s.days).sort((a, b) => b - a);
+  const second = sorted.length > 1 ? sorted[1] : sorted[0];
+  // Cap the window at one year -- beyond that the strip stops being a
+  // planning tool. Longer chains run off the right edge with an arrow.
+  const windowDays = Math.min(Math.max(Math.min(sorted[0], second * 1.2), 120) * 1.04, 365);
 
-  // month tick marks
+  // ---- adaptive ticks: monthly / quarterly / yearly by window width,
+  // so labels never smear into each other on long windows.
+  const stepMonths = windowDays <= 400 ? 1 : windowDays <= 1100 ? 3 : 12;
   const ticks = [];
   const t = new Date(now);
   t.setDate(1);
   t.setMonth(t.getMonth() + 1);
-  while ((t - now) / DAY < maxDays) {
-    ticks.push({ pct: ((t - now) / DAY / maxDays) * 100, label: t.toLocaleDateString('en-US', { month: 'short' }) });
-    t.setMonth(t.getMonth() + 1);
+  while (stepMonths > 1 && t.getMonth() % stepMonths !== 0) t.setMonth(t.getMonth() + 1);
+  while ((t - now) / DAY < windowDays) {
+    const isJan = t.getMonth() === 0;
+    const label = (isJan || stepMonths === 12)
+      ? "Jan '" + String(t.getFullYear()).slice(2)
+      : t.toLocaleDateString('en-US', { month: 'short' });
+    ticks.push({ pct: ((t - now) / DAY / windowDays) * 100, label, major: isJan });
+    t.setMonth(t.getMonth() + stepMonths);
   }
 
   const ticksHtml = ticks.map((tk) => `
-    <div class="tl-tick" style="left:${tk.pct}%">
+    <div class="tl-tick${tk.major ? ' tl-major' : ''}" style="left:${tk.pct}%">
       <div class="tl-tick-line"></div>
       <div class="tl-tick-label">${tk.label}</div>
     </div>`).join('');
 
+  const fmtFinish = (iso) => {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month: 'short' }) + " '" + String(d.getFullYear()).slice(2);
+  };
+
   const rowsHtml = spans.map((s) => {
-    const pct = (s.days / maxDays) * 100;
+    const overflow = s.days > windowDays;
+    const pct = overflow ? 100 : (s.days / windowDays) * 100;
     const donePct = s.drip.total > 0 ? Math.round((s.drip.sent / s.drip.total) * 100) : 0;
-    const cls = s.drip.started ? (s.drip.paused ? 'tl-bar tl-paused' : 'tl-bar') : 'tl-bar tl-unstarted';
-    const finish = s.drip.started && s.drip.duration.finishAt
-      ? new Date(s.drip.duration.finishAt).toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
-      : `~${Math.round(s.days)}d`;
+    let cls = 'tl-bar';
+    if (!s.drip.started) cls += ' tl-unstarted';
+    else if (s.drip.paused) cls += ' tl-paused';
+    if (overflow) cls += ' tl-overflow';
+
+    const finishTxt = s.drip.started && s.drip.duration.finishAt
+      ? fmtFinish(s.drip.duration.finishAt)
+      : '~' + Math.round(s.days) + 'd';
+    const label = overflow ? '&rarr; ' + finishTxt : finishTxt;
+
+    // overflow bars: label pinned inside the right edge; normal bars:
+    // label floats just past the bar end (clamped so it stays on screen)
+    const labelHtml = overflow
+      ? `<span class="tl-finish tl-finish-in">${label}</span>`
+      : `<span class="tl-finish" style="left:${Math.min(pct + 1.5, 80)}%">${label}</span>`;
+
     return `
       <div class="tl-row">
         <div class="tl-name">${escapeHtml(s.drip.name)}</div>
@@ -439,7 +710,7 @@ function renderTimeline(drips) {
           <div class="${cls}" style="width:${pct}%">
             <div class="tl-bar-done" style="width:${donePct}%"></div>
           </div>
-          <span class="tl-finish" style="left:${Math.min(pct + 1.5, 82)}%">${finish}</span>
+          ${labelHtml}
         </div>
       </div>`;
   }).join('');
@@ -452,7 +723,7 @@ function renderTimeline(drips) {
         ${rowsHtml}
       </div>
     </div>`;
-} // last loaded status payload, so expand/collapse can re-render without refetching
+}
 
 function renderCard(drip) {
   const pct = drip.total > 0 ? Math.round((drip.sent / drip.total) * 100) : 0;
@@ -486,6 +757,21 @@ function renderCard(drip) {
     if (bits.length) {
       durationHtml = `<div class="duration-line">${escapeHtml(bits.join(' \u00b7 '))}${d.mode === 'estimate' ? ' <span class="est-tag">est.</span>' : ''}</div>`;
     }
+  }
+
+  // ---- pace control (only drips with a runtime gap: SCP, Ong's Hat) ----
+  let paceHtml = '';
+  if (drip.gap) {
+    const avg = ((drip.gap.min + drip.gap.max) / 2).toFixed(1);
+    paceHtml = `
+      <div class="pace-line">
+        pace: ${drip.gap.min}\u2013${drip.gap.max} day gaps (~${avg} avg)${drip.gap.overridden ? ' <span class="est-tag">custom</span>' : ''}
+        <span class="pace-btns">
+          <button class="mini-btn" onclick="setPace('${drip.endpoint}', 'faster')">faster</button>
+          <button class="mini-btn" onclick="setPace('${drip.endpoint}', 'slower')">slower</button>
+          ${drip.gap.overridden ? `<button class="mini-btn" onclick="setPace('${drip.endpoint}', 'default')">reset</button>` : ''}
+        </span>
+      </div>`;
   }
 
   // ---- upcoming queue: next 5 unsent ----
@@ -529,6 +815,7 @@ function renderCard(drip) {
       ${statusHtml}
       ${nextHtml}
       ${durationHtml}
+      ${paceHtml}
       <div class="actions">
         <button class="action-btn" data-endpoint="${drip.endpoint}" onclick="testDrip(this)">test next</button>
         ${drip.started ? `<button class="action-btn" data-endpoint="${drip.endpoint}" onclick="sendNow(this)">send now</button>` : ''}
@@ -675,6 +962,32 @@ async function togglePause(btn) {
   }
 }
 
+async function setPace(endpoint, mode) {
+  const drip = DRIPS.find((d) => d.endpoint === endpoint);
+  if (!drip || !drip.gap) return;
+  const resultEl = document.getElementById('result-' + endpoint);
+  let q;
+  if (mode === 'default') {
+    q = 'set_gap=default';
+  } else {
+    const f = mode === 'faster' ? 0.6 : 1.6;
+    const clamp = (v) => Math.min(Math.max(Math.round(v * 100) / 100, 0.1), 45);
+    const min = clamp(drip.gap.min * f);
+    const max = clamp(Math.max(drip.gap.max * f, min));
+    q = `set_gap=${min},${max}`;
+  }
+  try {
+    const res = await fetch(`/.netlify/functions/${endpoint}?${q}`);
+    const text = await res.text();
+    resultEl.textContent = text;
+    resultEl.className = 'action-result ok';
+    setTimeout(load, 900);
+  } catch (err) {
+    resultEl.textContent = 'Failed: ' + err.message;
+    resultEl.className = 'action-result err';
+  }
+}
+
 function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -690,6 +1003,7 @@ async function load() {
     main.innerHTML = data.drips.map(renderCard).join('');
     DRIPS = data.drips;
     renderTimeline(data.drips);
+    renderFeed(data.drips);
     asOf.textContent = 'as of ' + new Date(data.generatedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   } catch (err) {
     main.innerHTML = `<div class="error-banner">Couldn't read status: ${escapeHtml(err.message)}</div>`;
