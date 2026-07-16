@@ -317,6 +317,9 @@
     border-left: 1px solid var(--ink-dim);
     margin-left: 5px;
     padding: 6px 0 2px;
+    max-height: 68vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   .vt-day {
     position: relative;
@@ -355,7 +358,7 @@
   }
   .vt-lead-h, .vt-lead-v {
     position: absolute;
-    background: var(--rule);
+    background: #55503f;
   }
   .vt-lead-h { height: 1px; }
   .vt-lead-v { width: 1px; }
@@ -518,7 +521,7 @@ function renderFeed(drips) {
   const el = document.getElementById('feed');
   const now = Date.now();
   const DAY = 86400000;
-  const HORIZON = 21 * DAY;
+  const HORIZON = 183 * DAY; // ~6 months; the feed scrolls
 
   // health: most recent real send across all chains
   let lastSend = null;
@@ -555,7 +558,7 @@ function renderFeed(drips) {
 
   // group by calendar day
   const days = [];
-  upcoming.slice(0, 30).forEach((u) => {
+  upcoming.slice(0, 400).forEach((u) => {
     const d = new Date(u.at);
     const key = d.toDateString();
     let g = days[days.length - 1];
@@ -592,17 +595,24 @@ function renderFeed(drips) {
     });
     const segH = Math.max(DAY_H, prevBottom + 14);
 
+    let displacedIdx = 0;
     const itemsHtml = entries.map((e) => {
       const time = new Date(e.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
       const displaced = e.labelY > e.dotY - 8 + 1;
       // leader: horizontal stub at dot; if displaced, add a vertical
-      // drop + second stub reaching the label ("extend their lines")
-      let leader = `<span class="vt-lead-h" style="top:${e.dotY}px;left:4px;width:10px;"></span>`;
+      // drop + second stub reaching the label ("extend their lines").
+      // Each displaced leader in a cluster drops at a different x, so
+      // stacked lines stay visually separate instead of blending.
+      let leader;
       if (displaced) {
+        const elbowX = 12 + (displacedIdx % 4) * 7;
+        displacedIdx += 1;
         const elbowY = e.labelY + 10;
-        leader += `<span class="vt-lead-v" style="top:${e.dotY}px;left:14px;height:${elbowY - e.dotY}px;"></span>`;
-        leader += `<span class="vt-lead-h" style="top:${elbowY}px;left:14px;width:${LABEL_X - 16}px;"></span>`;
+        leader = `<span class="vt-lead-h" style="top:${e.dotY}px;left:4px;width:${elbowX - 4}px;"></span>`;
+        leader += `<span class="vt-lead-v" style="top:${e.dotY}px;left:${elbowX}px;height:${elbowY - e.dotY}px;"></span>`;
+        leader += `<span class="vt-lead-h" style="top:${elbowY}px;left:${elbowX}px;width:${LABEL_X - elbowX - 2}px;"></span>`;
       } else {
+        displacedIdx = 0;
         leader = `<span class="vt-lead-h" style="top:${e.dotY}px;left:4px;width:${LABEL_X - 6}px;"></span>`;
       }
       return `
@@ -623,7 +633,7 @@ function renderFeed(drips) {
 
   el.innerHTML = `
     <div class="tl-wrap">
-      <div class="tl-header">NEXT 3 WEEKS</div>
+      <div class="tl-header">UPCOMING &middot; 6 MONTHS</div>
       ${healthHtml}
       <div class="vtl">${dayHtml || '<div class="empty-note">nothing scheduled in the next 3 weeks</div>'}</div>
     </div>`;
