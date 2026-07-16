@@ -7,6 +7,7 @@ const { buildEmailHtml } = require('../../lib/buildEmailHtml');
 const { denverWallTimeToUTC } = require('../../lib/denverTime');
 const { appendHistory } = require('../../lib/historyLog');
 const { getPaused, pauseNow, resumeAndGetPausedMs } = require('../../lib/pauseState');
+const { formatFrom } = require('../../lib/senderIdentity');
 
 const SENT_KEY = 'sent-item-ids';
 const STARTED_KEY = 'started';
@@ -64,7 +65,8 @@ async function sendOne(item, { testMode }) {
     const html = buildEmailHtml({ item, content: null, absenceNote: item.note });
     await sendEmail({
       to: process.env.DIONAEA_TO_EMAIL || process.env.DIGEST_TO_EMAIL,
-      subject: `Dionaea House -- ${item.subject}${testMode ? ' [TEST]' : ''}`,
+      from: formatFrom(item.sender) || undefined,
+      subject: `${item.subject}${testMode ? ' [TEST]' : ''}`,
       html,
     });
     return { ok: true, message: `SENT (absence)${testMode ? ' [TEST]' : ''}: ${item.id}` };
@@ -78,7 +80,8 @@ async function sendOne(item, { testMode }) {
   const html = buildEmailHtml({ item, content, absenceNote: null });
   await sendEmail({
     to: process.env.DIONAEA_TO_EMAIL || process.env.DIGEST_TO_EMAIL,
-    subject: `Dionaea House -- ${item.subject}${testMode ? ' [TEST]' : ''}`,
+    from: formatFrom(item.sender) || undefined,
+    subject: `${item.subject}${testMode ? ' [TEST]' : ''}`,
     html,
   });
   return { ok: true, message: `SENT${testMode ? ' [TEST]' : ''}: ${item.id}` };

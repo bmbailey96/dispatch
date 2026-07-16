@@ -5,6 +5,8 @@ const { buildOngshatEmailHtml, buildSubject } = require('../../lib/buildOngshatE
 const { denverWallTimeToUTC } = require('../../lib/denverTime');
 const { appendHistory } = require('../../lib/historyLog');
 const { getPaused, pauseNow, resumeAndGetPausedMs } = require('../../lib/pauseState');
+const { formatFrom } = require('../../lib/senderIdentity');
+const { getSenderFor } = require('../../lib/ongshatSenders');
 const { ongshat: PACING, getEffectiveGap } = require('../../lib/pacing');
 
 // Recomputed from the actual sequence rather than hardcoded, since this
@@ -70,6 +72,7 @@ exports.handler = async function (event) {
     const html = buildOngshatEmailHtml({ item, siteUrl, total: TOTAL_TEXT_ITEMS });
     await sendEmail({
       to: process.env.ONGSHAT_TO_EMAIL || process.env.DIGEST_TO_EMAIL,
+      from: formatFrom(getSenderFor(item)) || undefined,
       subject: `${buildSubject(item, TOTAL_TEXT_ITEMS)} [TEST]`,
       html,
     });
@@ -95,6 +98,7 @@ exports.handler = async function (event) {
     const html = buildOngshatEmailHtml({ item, siteUrl, total: TOTAL_TEXT_ITEMS });
     await sendEmail({
       to: process.env.ONGSHAT_TO_EMAIL || process.env.DIGEST_TO_EMAIL,
+      from: formatFrom(getSenderFor(item)) || undefined,
       subject: `${buildSubject(item, TOTAL_TEXT_ITEMS)} [TEST]`,
       html,
     });
@@ -175,7 +179,7 @@ exports.handler = async function (event) {
     const now = new Date();
     const html = buildOngshatEmailHtml({ item, siteUrl, total: TOTAL_TEXT_ITEMS });
     const subject = buildSubject(item, TOTAL_TEXT_ITEMS);
-    await sendEmail({ to: process.env.ONGSHAT_TO_EMAIL || process.env.DIGEST_TO_EMAIL, subject, html });
+    await sendEmail({ to: process.env.ONGSHAT_TO_EMAIL || process.env.DIGEST_TO_EMAIL, from: formatFrom(getSenderFor(item)) || undefined, subject, html });
     const gap = await getEffectiveGap(store, PACING);
     const next = randomNextSendTime(now, gap);
     await store.set(CURSOR_KEY, String(cursor + 1));
@@ -246,7 +250,7 @@ exports.handler = async function (event) {
     const html = buildOngshatEmailHtml({ item, siteUrl, total: TOTAL_TEXT_ITEMS });
     const subject = buildSubject(item, TOTAL_TEXT_ITEMS);
 
-    await sendEmail({ to: process.env.ONGSHAT_TO_EMAIL || process.env.DIGEST_TO_EMAIL, subject, html });
+    await sendEmail({ to: process.env.ONGSHAT_TO_EMAIL || process.env.DIGEST_TO_EMAIL, from: formatFrom(getSenderFor(item)) || undefined, subject, html });
 
     const gap = await getEffectiveGap(store, PACING);
     const next = randomNextSendTime(now, gap);
