@@ -1,3 +1,4 @@
+
 {
   "cicada-3301": { "date": "01-04", "basis": "solid", "note": "First puzzle posted to 4chan, Jan 4 2012" },
   "the-somerton-man": { "date": "12-01", "basis": "solid", "note": "Body found, Dec 1 1948" },
@@ -9,7 +10,7 @@
   "ted-s-caving-page": { "date": "05-19", "basis": "solid", "note": "Site's own 'Updated 5/19/01' timestamp, the last confirmed update to the original Angelfire page" },
   "petscop": { "date": "09-02", "basis": "solid", "note": "Moved from the first upload (March 12 2017, which sat 1 day from Phoenix Lights) to the actual final episode date, Sept 2 2019 -- both are real, equally defensible anchor points, and this one spreads the calendar better" },
   "local58-local58tv": { "date": "10-26", "basis": "solid", "note": "First episode 'Weather Service' released, Oct 26 2015" },
-  "the-wyoming-incident": { "date": "09-10", "basis": "solid", "note": "Original creepypasta posted by jonrev, Sept 10 2007" },
+  "the-wyoming-incident": { "date": "09-10", "basis": "approximate", "note": "Sources disagree on the exact origin -- some cite 2006 on Google Video, others a Sept 10 2007 post by jonrev. The entry itself now acknowledges this ambiguity rather than asserting a single date; kept Sept 10 as the anchor point since it's the more specifically documented claim" },
   "sad-satan": { "date": "06-25", "basis": "solid", "note": "Obscure Horror Corner's first upload, June 25 2015" },
   "the-hinterkaifeck-murders": { "date": "03-31", "basis": "solid", "note": "Night of the murders, March 31 1922" },
   "the-isdal-woman": { "date": "11-29", "basis": "solid", "note": "Body found, Nov 29 1970" },
