@@ -18,5 +18,10 @@
   # due based on the stored next-send-at timestamp.
   schedule = "*/30 * * * *"
 
+[functions."arg-weekly-check"]
+  # Same on-demand pattern as scp-weekly / ongshat-check -- checked
+  # every 30 min, only actually sends when next-send-at has passed.
+  schedule = "*/30 * * * *"
+
 # status.js is not scheduled -- it's called on-demand by the dashboard
 # frontend (public/index.html) whenever the page loads or is refreshed.
