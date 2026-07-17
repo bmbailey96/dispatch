@@ -1,13 +1,14 @@
 const { getStore, connectLambda } = require('@netlify/blobs');
 const masterList = require('../../data/arg-master-list.json');
-const sendOrder = require('../../data/arg-send-order.json'); // array of ids, in send order (currently 1..50, i.e. the order the research was built in -- reorder this file, not the master list, if you want a different weekly sequence)
+const sendOrder = require('../../data/arg-send-order.json'); // ids sorted by real-world anniversary date (see data/arg-anniversaries.json) -- this IS the calendar, not an arbitrary sequence, so reorder arg-anniversaries.json (and rerun the sort script) rather than hand-editing this file
+const anniversaries = require('../../data/arg-anniversaries.json'); // slug -> { date: "MM-DD", basis, note }
 const { sendEmail } = require('../../lib/sendEmail');
 const { buildArgEmailHtml, buildSubject } = require('../../lib/buildArgEmailHtml');
 const { denverWallTimeToUTC } = require('../../lib/denverTime');
 const { appendHistory } = require('../../lib/historyLog');
 const { getPaused, pauseNow, resumeAndGetPausedMs } = require('../../lib/pauseState');
 const { formatFrom } = require('../../lib/senderIdentity');
-const { arg: PACING, getEffectiveGap } = require('../../lib/pacing');
+const { arg: JITTER, getEffectiveGap } = require('../../lib/pacing');
 
 // Single consistent sender identity for this drip -- unlike Dionaea or
 // Ong's Hat, there's no in-fiction character roster here, it's a
@@ -22,14 +23,28 @@ const NEXT_SEND_KEY = 'next-send-at';
 const STARTED_KEY = 'started';
 
 /**
- * Same shape as SCP/Ong's Hat: Montana-local time, never overnight,
- * weighted toward evening. Kept identical on purpose -- an automated
- * send landing at a suspiciously consistent time of day is the kind of
- * thing that gives an automated thing away.
+ * Anniversary-driven scheduling: each entry has a real MM-DD in
+ * arg-anniversaries.json (the event date, or the most meaningful
+ * substitute where no single date exists -- declassification,
+ * discovery, publication). sendOrder is already sorted by that date,
+ * so "the next entry" and "the next anniversary" are the same thing --
+ * this function just finds when that date next occurs after `from`,
+ * this year or next, and applies the same evening-weighted
+ * Montana-local time-of-day randomization SCP/Ong's Hat use, plus a
+ * small day-of jitter (JITTER, from pacing.js) so it doesn't always
+ * land on the exact same hour on the exact same calendar day.
  */
-function randomNextSendTime(from, gap) {
-  const gapDays = gap.minGapDays + Math.random() * (gap.maxGapDays - gap.minGapDays);
-  const target = new Date(from.getTime() + gapDays * 24 * 60 * 60 * 1000);
+function nextAnniversaryTime(entry, from, jitterDays) {
+  const [mm, dd] = anniversaries[entry.slug].date.split('-').map(Number);
+  const jitter = jitterDays.minGapDays + Math.random() * (jitterDays.maxGapDays - jitterDays.minGapDays);
+
+  let year = from.getUTCFullYear();
+  let target = new Date(Date.UTC(year, mm - 1, dd));
+  if (target.getTime() + jitter * 86400000 <= from.getTime()) {
+    year += 1;
+    target = new Date(Date.UTC(year, mm - 1, dd));
+  }
+  target = new Date(target.getTime() + jitter * 24 * 60 * 60 * 1000);
 
   let hour;
   if (Math.random() < 0.7) {
@@ -113,19 +128,23 @@ exports.handler = async function (event) {
     return { statusCode: 200, body: `Cursor set to ${idx}. Next up: ${upcoming ? upcoming.title : '(end of sequence)'}` };
   }
 
-  // ?set_gap=min,max (days) / ?set_gap=default -- same runtime pacing
-  // override pattern as SCP and Ong's Hat.
+  // ?set_gap=min,max (days) / ?set_gap=default -- controls the small
+  // jitter applied AFTER the real anniversary date (so it doesn't
+  // always land on the exact same calendar day/hour). This is not a
+  // gap between sends anymore -- the calendar does that job now -- so
+  // keep it small; a few days at most or it starts to defeat the
+  // point of an anniversary send.
   if (params.set_gap !== undefined) {
     if (params.set_gap === 'default') {
       await store.set('gap-override', '');
-      return { statusCode: 200, body: `Pacing reset to default (${PACING.minGapDays}-${PACING.maxGapDays} day gaps).` };
+      return { statusCode: 200, body: `Jitter reset to default (${JITTER.minGapDays}-${JITTER.maxGapDays} days after the anniversary).` };
     }
     const [min, max] = String(params.set_gap).split(',').map(Number);
-    if (!isFinite(min) || !isFinite(max) || min < 0.1 || max > 45 || max < min) {
-      return { statusCode: 400, body: 'set_gap wants min,max in days: 0.1 <= min <= max <= 45. Or set_gap=default.' };
+    if (!isFinite(min) || !isFinite(max) || min < 0 || max > 5 || max < min) {
+      return { statusCode: 400, body: 'set_gap wants min,max in days: 0 <= min <= max <= 5 (this is jitter around the real anniversary now, not a gap between sends). Or set_gap=default.' };
     }
     await store.set('gap-override', JSON.stringify({ min, max }));
-    return { statusCode: 200, body: `Pacing set: ${min}-${max} day gaps from the next scheduling onward.` };
+    return { statusCode: 200, body: `Jitter set: ${min}-${max} days after the anniversary, from the next scheduling onward.` };
   }
 
   if (params.pause !== undefined) {
@@ -164,15 +183,19 @@ exports.handler = async function (event) {
     const html = buildArgEmailHtml({ entry, total: TOTAL, siteUrl });
     const subject = buildSubject(entry, TOTAL);
     await sendEmail({ to: process.env.ARG_TO_EMAIL || process.env.DIGEST_TO_EMAIL, from: formatFrom(SENDER_DISPLAY_NAME) || undefined, subject, html });
-    const gap = await getEffectiveGap(store, PACING);
-    const next = randomNextSendTime(now, gap);
+    const jitter = await getEffectiveGap(store, JITTER);
+    const upcoming = entryAtCursor(cursor + 1);
+    const next = upcoming ? nextAnniversaryTime(upcoming, now, jitter) : null;
     await store.set(CURSOR_KEY, String(cursor + 1));
-    await store.set(NEXT_SEND_KEY, next.toISOString());
+    if (next) await store.set(NEXT_SEND_KEY, next.toISOString());
     await appendHistory(store, { at: now.toISOString(), label: entry.title, type: entry.category });
-    return { statusCode: 200, body: `Sent for real: index ${cursor} (id ${entry.id}, ${entry.title}). Next send scheduled for ${next.toISOString()}.` };
+    return { statusCode: 200, body: `Sent for real: index ${cursor} (id ${entry.id}, ${entry.title}). ${next ? `Next send (${upcoming.title}, anniversary ${anniversaries[upcoming.slug].date}) scheduled for ${next.toISOString()}.` : 'That was the last entry in the sequence.'}` };
   }
 
-  // ?start=1 arms the chain. First real send happens on the next cron tick.
+  // ?start=1 arms the chain. The first entry waits for its own real
+  // anniversary just like every other entry -- starting the drip
+  // doesn't mean "send immediately," it means "begin observing the
+  // calendar."
   if (params.start !== undefined) {
     let already = null;
     try {
@@ -182,7 +205,11 @@ exports.handler = async function (event) {
     }
     if (already === 'true') return { statusCode: 200, body: 'Already started.' };
     await store.set(STARTED_KEY, 'true');
-    return { statusCode: 200, body: 'Started. First entry will go out on the next scheduled check (within 30 minutes).' };
+    const first = entryAtCursor(0);
+    const jitter = await getEffectiveGap(store, JITTER);
+    const next = nextAnniversaryTime(first, new Date(), jitter);
+    await store.set(NEXT_SEND_KEY, next.toISOString());
+    return { statusCode: 200, body: `Started. First entry (${first.title}, anniversary ${anniversaries[first.slug].date}) scheduled for ${next.toISOString()}.` };
   }
 
   try {
@@ -227,15 +254,16 @@ exports.handler = async function (event) {
 
     await sendEmail({ to: process.env.ARG_TO_EMAIL || process.env.DIGEST_TO_EMAIL, from: formatFrom(SENDER_DISPLAY_NAME) || undefined, subject, html });
 
-    const gap = await getEffectiveGap(store, PACING);
-    const next = randomNextSendTime(now, gap);
+    const jitter = await getEffectiveGap(store, JITTER);
+    const upcoming = entryAtCursor(cursor + 1);
+    const next = upcoming ? nextAnniversaryTime(upcoming, now, jitter) : null;
     await store.set(CURSOR_KEY, String(cursor + 1));
-    await store.set(NEXT_SEND_KEY, next.toISOString());
+    if (next) await store.set(NEXT_SEND_KEY, next.toISOString());
     await appendHistory(store, { at: now.toISOString(), label: entry.title, type: entry.category });
 
     return {
       statusCode: 200,
-      body: `Sent: index ${cursor} (id ${entry.id}, ${entry.title}). Next send scheduled for ${next.toISOString()}.`,
+      body: `Sent: index ${cursor} (id ${entry.id}, ${entry.title}). ${next ? `Next send (${upcoming.title}, anniversary ${anniversaries[upcoming.slug].date}) scheduled for ${next.toISOString()}.` : 'That was the last entry in the sequence.'}`,
     };
   } catch (err) {
     console.error('ARG of the Week drip failed:', err.message);

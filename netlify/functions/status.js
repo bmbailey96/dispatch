@@ -1,9 +1,8 @@
-
 const { getStore, connectLambda } = require('@netlify/blobs');
 const { readHistory } = require('../../lib/historyLog');
 const { getPaused } = require('../../lib/pauseState');
 const { denverWallTimeToUTC } = require('../../lib/denverTime');
-const { ongshat: ONGSHAT_PACING, scp: SCP_PACING, arg: ARG_PACING, getEffectiveGap } = require('../../lib/pacing');
+const { ongshat: ONGSHAT_PACING, scp: SCP_PACING, getEffectiveGap } = require('../../lib/pacing');
 
 const schedule = require('../../data/schedule.json');
 const scpSendOrder = require('../../data/scp-send-order.json');
@@ -11,6 +10,7 @@ const scpMasterList = require('../../data/scp-master-list.json');
 const ongshatSequence = require('../../data/ongshat-sequence.json');
 const argMasterList = require('../../data/arg-master-list.json');
 const argSendOrder = require('../../data/arg-send-order.json');
+const argAnniversaries = require('../../data/arg-anniversaries.json');
 
 const argById = Object.fromEntries(argMasterList.map((e) => [e.id, e]));
 
@@ -255,31 +255,58 @@ async function argStatus() {
     // not scheduled yet
   }
   const history = await readHistory(store);
-  const gap = await getEffectiveGap(store, ARG_PACING);
-  const avgGap = (gap.minGapDays + gap.maxGapDays) / 2;
   const now = new Date();
 
-  let runningDate = nextSendAt ? new Date(nextSendAt) : now;
-  const items = argSendOrder.map((id, idx) => {
+  // Anniversary-driven, not probabilistic -- each remaining item's date
+  // is the real, exact next occurrence of its own MM-DD (see
+  // data/arg-anniversaries.json), not an average-gap estimate. The one
+  // exception is the very next item, whose exact scheduled instant
+  // (with time-of-day + jitter already applied) we already have in
+  // nextSendAt.
+  function nextOccurrence(mmdd, from) {
+    const [mm, dd] = mmdd.split('-').map(Number);
+    let year = from.getUTCFullYear();
+    let d = new Date(Date.UTC(year, mm - 1, dd));
+    if (d.getTime() <= from.getTime()) {
+      d = new Date(Date.UTC(year + 1, mm - 1, dd));
+    }
+    return d;
+  }
+
+  const items = [];
+  let cursorDate = now;
+  for (let idx = 0; idx < argSendOrder.length; idx++) {
+    const entry = argById[argSendOrder[idx]];
     const sent = idx < cursor;
     let at = null;
     if (!sent) {
-      at = runningDate.toISOString();
-      runningDate = new Date(runningDate.getTime() + avgGap * DAY_MS);
+      if (idx === cursor && nextSendAt) {
+        at = nextSendAt;
+        cursorDate = new Date(nextSendAt);
+      } else {
+        cursorDate = nextOccurrence(argAnniversaries[entry.slug].date, cursorDate);
+        at = cursorDate.toISOString();
+      }
     }
-    const entry = argById[id];
-    return { key: idx, label: entry ? entry.title : `id ${id}`, type: entry ? entry.category : undefined, sent, at };
-  });
+    items.push({
+      key: idx,
+      label: entry ? entry.title : `id ${argSendOrder[idx]}`,
+      type: entry ? entry.category : undefined,
+      sent,
+      at,
+      anniversary: entry ? argAnniversaries[entry.slug].date : undefined,
+      dateBasis: entry ? argAnniversaries[entry.slug].basis : undefined,
+    });
+  }
 
   const nextItem = items.find((i) => !i.sent) || null;
   const remainingCount = Math.max(argSendOrder.length - cursor, 0);
+  const lastItem = items[items.length - 1];
 
   const duration = {
-    mode: 'estimate',
-    note: `average pacing (${gap.minGapDays}-${gap.maxGapDays} day gaps, ~${avgGap} avg) -- not exact`,
-    totalDays: Math.round(argSendOrder.length * avgGap),
-    remainingDays: Math.round(remainingCount * avgGap),
-    finishAt: remainingCount > 0 ? new Date(now.getTime() + remainingCount * avgGap * DAY_MS).toISOString() : null,
+    mode: 'calendar',
+    note: 'Each entry sends on its own real-world anniversary (event date, declassification, discovery -- whichever is most meaningful), not a fixed gap, so this is the actual date, not an estimate.',
+    finishAt: lastItem ? lastItem.at : null,
   };
 
   return {
@@ -290,9 +317,8 @@ async function argStatus() {
     total: argSendOrder.length,
     sent: cursor,
     remaining: remainingCount,
-    next: nextItem ? { label: nextItem.label, at: nextItem.at } : null,
+    next: nextItem ? { label: nextItem.label, at: nextItem.at, anniversary: nextItem.anniversary } : null,
     duration,
-    gap: { min: gap.minGapDays, max: gap.maxGapDays, overridden: gap.overridden },
     items,
     history: history.slice().reverse(),
   };
