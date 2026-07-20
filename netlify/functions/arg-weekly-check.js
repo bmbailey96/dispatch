@@ -128,6 +128,30 @@ exports.handler = async function (event) {
     return { statusCode: 200, body: `Cursor set to ${idx}. Next up: ${upcoming ? upcoming.title : '(end of sequence)'}` };
   }
 
+  // ?resync=1 -- recompute next-send-at for whatever entry is currently
+  // at the cursor, without sending or advancing anything. Needed after
+  // arg-send-order.json is edited/reordered: the cursor is just a numeric
+  // position, so the underlying entry at that position can change, but
+  // next-send-at is only ever set at ?start=1 or right after a real send
+  // -- it does NOT auto-update when the file changes. Without this, a
+  // reordered file leaves next-send-at pointing at whatever the OLD
+  // entry's anniversary was, silently mismatched against the new label.
+  if (params.resync !== undefined) {
+    let cursor = 0;
+    try {
+      const raw = await store.get(CURSOR_KEY, { type: 'text' });
+      if (raw !== null) cursor = parseInt(raw, 10);
+    } catch (err) {
+      // first run
+    }
+    const entry = entryAtCursor(cursor);
+    if (!entry) return { statusCode: 200, body: 'Cursor is at/past the end of the sequence -- nothing to resync.' };
+    const jitter = await getEffectiveGap(store, JITTER);
+    const next = nextAnniversaryTime(entry, new Date(), jitter);
+    await store.set(NEXT_SEND_KEY, next.toISOString());
+    return { statusCode: 200, body: `Resynced. Cursor ${cursor} (${entry.title}, anniversary ${anniversaries[entry.slug].date}) now scheduled for ${next.toISOString()}.` };
+  }
+
   // ?set_gap=min,max (days) / ?set_gap=default -- controls the small
   // jitter applied AFTER the real anniversary date (so it doesn't
   // always land on the exact same calendar day/hour). This is not a
