@@ -266,9 +266,14 @@ async function argStatus() {
   function nextOccurrence(mmdd, from) {
     const [mm, dd] = mmdd.split('-').map(Number);
     let year = from.getUTCFullYear();
-    let d = new Date(Date.UTC(year, mm - 1, dd));
+    // Noon UTC, not midnight -- midnight UTC displays as the previous
+    // calendar day in every negative-UTC-offset timezone (all of North
+    // and South America), which was silently shifting every computed
+    // upcoming date back by one day on the dashboard. Noon UTC is safe
+    // across the full realistic offset range (UTC-12 to UTC+14).
+    let d = new Date(Date.UTC(year, mm - 1, dd, 12, 0, 0));
     if (d.getTime() <= from.getTime()) {
-      d = new Date(Date.UTC(year + 1, mm - 1, dd));
+      d = new Date(Date.UTC(year + 1, mm - 1, dd, 12, 0, 0));
     }
     return d;
   }
